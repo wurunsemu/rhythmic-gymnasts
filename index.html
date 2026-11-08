@@ -1,0 +1,1509 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Ritmik Cimnastik — Performans İzleme</title>
+<!-- PWA manifest -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1A3C5E">
+<meta name="description" content="Milli Takım Performans ve Wellness Takip Sistemi">
+<!-- Android / Chrome -->
+<meta name="mobile-web-app-capable" content="yes">
+<!-- iOS Safari -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RC İzleme">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.3/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#1A3C5E;
+  --red:#C8102E;
+  --green:#22c55e;
+  --yellow:#f59e0b;
+  --danger:#ef4444;
+  --bg:#f0f4f8;
+  --card:#ffffff;
+  --text:#1e293b;
+  --muted:#64748b;
+  --border:#e2e8f0;
+  --radius:12px;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 12px rgba(0,0,0,.06);
+}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  font-size:16px;
+  line-height:1.5;
+}
+#app{min-height:100vh;display:flex;flex-direction:column}
+
+/* ============================================================
+   LOADING
+   ============================================================ */
+.loading{display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;gap:16px}
+.spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--navy);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ============================================================
+   LOGIN
+   ============================================================ */
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:linear-gradient(135deg,var(--navy) 0%,#2a5a8e 100%)}
+.login-card{background:var(--card);border-radius:20px;padding:40px 32px;width:100%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.login-logo{text-align:center;margin-bottom:28px}
+.login-logo h1{font-size:1.4rem;color:var(--navy);font-weight:800;line-height:1.2}
+.login-logo p{color:var(--muted);font-size:.85rem;margin-top:4px}
+.login-stripe{width:48px;height:4px;background:var(--red);border-radius:2px;margin:12px auto 0}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:.85rem;font-weight:600;color:var(--text);margin-bottom:6px}
+.form-group input{width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:1rem;outline:none;transition:border-color .2s;background:#fafafa}
+.form-group input:focus{border-color:var(--navy);background:#fff}
+.btn-primary{width:100%;padding:14px;background:var(--navy);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;transition:opacity .2s}
+.btn-primary:hover{opacity:.88}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-secondary{padding:8px 16px;background:transparent;color:var(--navy);border:1.5px solid var(--navy);border-radius:8px;font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s}
+.btn-secondary:hover{background:var(--navy);color:#fff}
+.btn-sm{padding:7px 14px;border-radius:8px;font-size:.8rem;font-weight:600;cursor:pointer;border:none;transition:all .2s}
+.btn-red{background:var(--red);color:#fff}
+.btn-red:hover{opacity:.85}
+.btn-green{background:var(--green);color:#fff}
+.btn-green:hover{opacity:.85}
+.login-err{background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:8px;padding:10px 14px;font-size:.85rem;margin-bottom:14px;display:none}
+.login-err.show{display:block}
+.lang-switch-login{text-align:center;margin-top:20px}
+.lang-btn{background:transparent;border:1px solid rgba(255,255,255,.4);color:rgba(255,255,255,.8);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:.8rem;margin:0 4px;transition:all .2s}
+.lang-btn.active{background:rgba(255,255,255,.2);border-color:rgba(255,255,255,.8);color:#fff}
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+.header{background:var(--navy);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.header-brand{font-weight:800;font-size:1rem;line-height:1.1;flex:1}
+.header-brand small{font-weight:400;font-size:.75rem;opacity:.75;display:block}
+.header-actions{display:flex;align-items:center;gap:8px}
+.lang-toggle{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.75rem;font-weight:600}
+.lang-toggle:hover{background:rgba(255,255,255,.2)}
+.logout-btn{background:rgba(200,16,46,.25);border:1px solid rgba(200,16,46,.5);color:#fff;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.75rem;font-weight:600}
+.logout-btn:hover{background:var(--red)}
+
+/* ============================================================
+   MAIN LAYOUT
+   ============================================================ */
+.main{flex:1;padding:16px;max-width:960px;margin:0 auto;width:100%}
+.main-wide{flex:1;padding:16px;width:100%}
+
+/* ============================================================
+   CARDS
+   ============================================================ */
+.card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:16px}
+.card-title{font-size:1rem;font-weight:700;color:var(--navy);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.card-title .icon{font-size:1.1rem}
+
+/* ============================================================
+   TABS
+   ============================================================ */
+.tab-bar{display:flex;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px}
+.tab-btn{flex:1;padding:12px 8px;border:none;background:transparent;cursor:pointer;font-size:.8rem;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;transition:all .2s}
+.tab-btn.active{color:var(--navy);border-bottom-color:var(--navy);background:rgba(26,60,94,.04)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+.form-row{margin-bottom:18px}
+.form-label{display:block;font-size:.85rem;font-weight:600;color:var(--text);margin-bottom:6px}
+.form-sublabel{font-size:.75rem;color:var(--muted);margin-bottom:8px}
+.form-select{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:.95rem;background:#fafafa;outline:none;cursor:pointer}
+.form-select:focus{border-color:var(--navy)}
+.form-input{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:.95rem;background:#fafafa;outline:none}
+.form-input:focus{border-color:var(--navy);background:#fff}
+.form-textarea{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:.9rem;background:#fafafa;outline:none;resize:vertical;min-height:80px}
+.form-textarea:focus{border-color:var(--navy);background:#fff}
+
+/* Slider */
+.slider-wrap{margin-bottom:14px}
+.slider-label{font-size:.9rem;font-weight:600;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center}
+.slider-label span{color:var(--navy);font-size:1rem;font-weight:800}
+.slider-desc{font-size:.75rem;color:var(--muted);margin-bottom:6px;min-height:18px}
+input[type=range]{width:100%;accent-color:var(--navy);cursor:pointer;height:6px}
+.slider-ticks{display:flex;justify-content:space-between;font-size:.65rem;color:var(--muted);margin-top:2px;padding:0 2px}
+
+/* Borg selector */
+.borg-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:8px}
+.borg-btn{padding:10px 4px;border:2px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer;text-align:center;transition:all .15s}
+.borg-btn .borg-num{font-size:1.1rem;font-weight:800;color:var(--navy)}
+.borg-btn .borg-desc{font-size:.6rem;color:var(--muted);line-height:1.1;margin-top:2px}
+.borg-btn.selected{border-color:var(--navy);background:var(--navy)}
+.borg-btn.selected .borg-num,.borg-btn.selected .borg-desc{color:#fff}
+
+/* ============================================================
+   TRAFFIC LIGHT
+   ============================================================ */
+.tl-table{width:100%;border-collapse:collapse;border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.tl-table th{background:var(--navy);color:#fff;padding:12px 14px;font-size:.8rem;font-weight:600;text-align:left}
+.tl-table td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:.85rem;vertical-align:middle}
+.tl-table tr:last-child td{border-bottom:none}
+.tl-table tr:nth-child(even) td{background:#f8fafc}
+.tl-dot{display:inline-block;width:16px;height:16px;border-radius:50%;vertical-align:middle}
+.tl-dot.green{background:var(--green)}
+.tl-dot.yellow{background:var(--yellow)}
+.tl-dot.red{background:var(--danger)}
+.tl-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:.78rem;font-weight:700}
+.tl-badge.green{background:#dcfce7;color:#15803d}
+.tl-badge.yellow{background:#fef9c3;color:#a16207}
+.tl-badge.red{background:#fee2e2;color:#b91c1c}
+
+/* ============================================================
+   STATUS OVERVIEW CARD
+   ============================================================ */
+.status-overview{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px}
+.status-box{background:var(--card);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);text-align:center}
+.status-box .label{font-size:.75rem;color:var(--muted);font-weight:600;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+.status-box .value{font-size:1.6rem;font-weight:800;color:var(--navy)}
+.status-box .sub{font-size:.75rem;color:var(--muted);margin-top:2px}
+
+/* ============================================================
+   ALERT
+   ============================================================ */
+.alert{border-radius:10px;padding:12px 16px;font-size:.85rem;margin-bottom:14px}
+.alert-info{background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd}
+.alert-warn{background:#fef9c3;color:#854d0e;border:1px solid #fde68a}
+.alert-err{background:#fee2e2;color:#b91c1c;border:1px solid #fecaca}
+.alert-ok{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0}
+
+/* ============================================================
+   RESEARCHER DASHBOARD
+   ============================================================ */
+.dashboard-tabs{display:flex;gap:4px;background:var(--navy);padding:4px;border-radius:10px;margin-bottom:16px;overflow-x:auto}
+.dtab-btn{padding:9px 18px;border-radius:7px;border:none;background:transparent;color:rgba(255,255,255,.65);font-size:.82rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s}
+.dtab-btn.active{background:rgba(255,255,255,.2);color:#fff}
+.dtab-btn:hover:not(.active){background:rgba(255,255,255,.1);color:#fff}
+
+/* Charts */
+.chart-wrap{position:relative;height:220px;margin-top:12px}
+
+/* Table wrapper for overflow */
+.table-scroll{overflow-x:auto}
+
+/* Athlete detail rows */
+.athlete-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
+.athlete-row:hover{background:#f8fafc;border-radius:8px;padding-left:8px}
+.athlete-num{width:36px;height:36px;background:var(--navy);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.9rem;flex-shrink:0}
+.athlete-info{flex:1}
+.athlete-info .name{font-weight:700;font-size:.9rem}
+.athlete-info .role-tag{font-size:.72rem;color:var(--muted)}
+
+/* ============================================================
+   EXPORT BUTTON
+   ============================================================ */
+.export-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;background:var(--navy);color:#fff;border:none;border-radius:10px;font-size:.85rem;font-weight:700;cursor:pointer;margin-top:12px;transition:opacity .2s}
+.export-btn:hover{opacity:.85}
+
+/* ============================================================
+   EMPTY STATE
+   ============================================================ */
+.empty{text-align:center;padding:40px 20px;color:var(--muted)}
+.empty .icon{font-size:2.5rem;margin-bottom:8px}
+.empty p{font-size:.85rem}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media(max-width:600px){
+  .main,.main-wide{padding:12px}
+  .status-overview{grid-template-columns:repeat(2,1fr)}
+  .tl-table th,.tl-table td{padding:9px 10px;font-size:.78rem}
+  .dashboard-tabs{flex-wrap:nowrap}
+}
+@media(min-width:768px){
+  .main{padding:24px}
+  .borg-grid{grid-template-columns:repeat(5,1fr)}
+}
+
+/* ============================================================
+   MISC
+   ============================================================ */
+.section-heading{font-size:1.1rem;font-weight:800;color:var(--navy);margin-bottom:14px}
+.muted{color:var(--muted);font-size:.8rem}
+.mb8{margin-bottom:8px}
+.mb16{margin-bottom:16px}
+.flex-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+hr{border:none;border-top:1px solid var(--border);margin:16px 0}
+.success-banner{background:var(--green);color:#fff;border-radius:10px;padding:14px 16px;text-align:center;font-weight:700;margin-bottom:16px;display:none}
+.success-banner.show{display:block}
+.today-badge{display:inline-block;background:#e0f2fe;color:#0369a1;border-radius:6px;padding:3px 8px;font-size:.72rem;font-weight:700;margin-left:8px}
+.already-done{background:#dcfce7;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;color:#15803d;font-size:.85rem;text-align:center;font-weight:600;margin-bottom:14px}
+input[type=number]{-moz-appearance:textfield}
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+</style>
+</head>
+<body>
+<div id="app"><div class="loading"><div class="spinner"></div></div></div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   CONFIG
+   ============================================================ */
+const SUPABASE_URL = 'https://zhcvcivdxycnluomnlzf.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_DuMAqSITlyB0czj_FV9aMw_0WsYxJX1';
+
+/* ============================================================
+   i18n TRANSLATIONS
+   ============================================================ */
+const LANG = {
+  tr: {
+    app_title: 'Ritmik Cimnastik',
+    app_sub: 'Performans İzleme Sistemi',
+    login: 'Giriş Yap',
+    email: 'E-posta',
+    password: 'Şifre',
+    login_btn: 'Giriş Yap',
+    login_err: 'Giriş başarısız. E-posta veya şifreyi kontrol edin.',
+    logout: 'Çıkış',
+    today: 'Bugün',
+    save: 'Kaydet',
+    cancel: 'İptal',
+    loading: 'Yükleniyor…',
+    saved_ok: 'Kaydedildi!',
+    no_data: 'Veri bulunamadı',
+    // tabs – sporcu
+    tab_hooper: 'Sabah',
+    tab_rpe: 'Antrenman',
+    tab_hrv: 'HRV',
+    tab_quest: 'Anket',
+    // hooper
+    hooper_title: 'Günlük Durum Formu',
+    hooper_sub: 'Her gün sabah, antrenmandan önce doldurun.',
+    fatigue: 'Yorgunluk',
+    fatigue_hi: 'Çok yorgunum',
+    fatigue_lo: 'Hiç yorgun değilim',
+    stress: 'Stres',
+    stress_hi: 'Çok stresli',
+    stress_lo: 'Hiç stresli değilim',
+    muscle_soreness: 'Kas Ağrısı',
+    soreness_hi: 'Çok ağrılı',
+    soreness_lo: 'Hiç ağrısız',
+    sleep_quality: 'Uyku Kalitesi',
+    sleep_hi: 'Çok kötü uyudum',
+    sleep_lo: 'Çok iyi uyudum',
+    hooper_total: 'Toplam Skor',
+    already_hooper: 'Bugün sabah formunu doldurdunuz. ✓',
+    // rpe
+    rpe_title: 'Antrenman RPE Girişi',
+    rpe_sub: 'Antrenman bittikten 15–30 dk sonra doldurun.',
+    session_name: 'Antrenman Adı',
+    session_name_ph: 'ör. Sabah Antrenmanı',
+    duration: 'Süre (dakika)',
+    rpe_label: 'Algılanan Zorluk (Borg 6-20)',
+    rpe_desc: '6 = Çok hafif   |   20 = Maksimal efor',
+    session_load: 'Antrenman Yükü',
+    // hrv
+    hrv_title: 'HRV Verileriniz',
+    hrv_sub: 'Araştırmacı tarafından girilen HRV ölçümleriniz.',
+    rmssd: 'RMSSD (ms)',
+    baseline: '7 günlük ortalama',
+    // antrenor
+    antrenor_title: 'Haftalık Trafik Işığı',
+    antrenor_sub: 'Sporcu bazlı haftalık durum özeti.',
+    athlete: 'Sporcu',
+    hrv_status: 'HRV',
+    hooper_status: 'Hooper',
+    acwr_status: 'ACWR',
+    overall: 'Genel',
+    green: 'İyi',
+    yellow: 'Dikkat',
+    red: 'Risk',
+    no_data_ant: 'Henüz yeterli veri yok. Sporcular veri girdikçe burada görünecek.',
+    // researcher
+    overview: 'Genel Bakış',
+    athletes_tab: 'Sporcular',
+    data_entry: 'Veri Girişi',
+    export: 'Export',
+    team_overview: 'Takım Genel Bakış',
+    athlete_detail: 'Sporcu Detay',
+    hrv_entry_title: 'HRV Veri Girişi',
+    add_athlete: 'Sporcu Ekle',
+    name: 'Ad',
+    surname: 'Soyad',
+    jersey: 'Forma No',
+    role: 'Rol',
+    sporcu: 'Sporcu',
+    antrenor: 'Antrenör',
+    arastirmaci: 'Araştırmacı',
+    select_athlete: 'Sporcu seçin',
+    date: 'Tarih',
+    resting_hr: 'İstirahat KH (bpm)',
+    lf_hf: 'LF/HF Oranı',
+    notes: 'Notlar',
+    export_title: 'CSV Export',
+    export_desc: 'Tarih aralığı seçin ve CSV olarak indirin.',
+    start_date: 'Başlangıç Tarihi',
+    end_date: 'Bitiş Tarihi',
+    export_hrv: 'HRV Verisi İndir',
+    export_hooper: 'Hooper Verisi İndir',
+    export_rpe: 'RPE Verisi İndir',
+    setup_msg: 'Hesabınız henüz tanımlanmamış. Lütfen araştırmacıyla iletişime geçin.',
+    // borg labels
+    b6:'Dinlenme', b7:'Çok Hafif', b8:'Çok Hafif', b9:'Hafif', b10:'Hafif',
+    b11:'Orta', b12:'Orta', b13:'Biraz Zor', b14:'Biraz Zor',
+    b15:'Zor', b16:'Zor', b17:'Çok Zor', b18:'Çok Zor',
+    b19:'Aşırı Zor', b20:'Maksimal',
+    questionnaires: 'Dönemsel Anketler',
+    quest_info: 'Araştırmacı tarafından aktif hale getirilen anketler burada görünecektir.',
+    week_of: 'Hafta',
+    no_athletes: 'Henüz sporcu eklenmemiş.',
+  },
+  en: {
+    app_title: 'Rhythmic Gymnastics',
+    app_sub: 'Performance Monitoring System',
+    login: 'Log In',
+    email: 'Email',
+    password: 'Password',
+    login_btn: 'Log In',
+    login_err: 'Login failed. Check your email or password.',
+    logout: 'Log out',
+    today: 'Today',
+    save: 'Save',
+    cancel: 'Cancel',
+    loading: 'Loading…',
+    saved_ok: 'Saved!',
+    no_data: 'No data found',
+    tab_hooper: 'Morning',
+    tab_rpe: 'Training',
+    tab_hrv: 'HRV',
+    tab_quest: 'Survey',
+    hooper_title: 'Daily Wellness Form',
+    hooper_sub: 'Complete every morning before training.',
+    fatigue: 'Fatigue',
+    fatigue_hi: 'Extremely fatigued',
+    fatigue_lo: 'Not at all fatigued',
+    stress: 'Stress',
+    stress_hi: 'Extremely stressed',
+    stress_lo: 'Not at all stressed',
+    muscle_soreness: 'Muscle Soreness',
+    soreness_hi: 'Extremely sore',
+    soreness_lo: 'Not at all sore',
+    sleep_quality: 'Sleep Quality',
+    sleep_hi: 'Very poor sleep',
+    sleep_lo: 'Very good sleep',
+    hooper_total: 'Total Score',
+    already_hooper: 'Morning form already submitted today. ✓',
+    rpe_title: 'Training RPE Entry',
+    rpe_sub: 'Fill in 15–30 minutes after the session ends.',
+    session_name: 'Session Name',
+    session_name_ph: 'e.g. Morning Training',
+    duration: 'Duration (minutes)',
+    rpe_label: 'Perceived Exertion (Borg 6-20)',
+    rpe_desc: '6 = Very light   |   20 = Maximal effort',
+    session_load: 'Session Load',
+    hrv_title: 'Your HRV Data',
+    hrv_sub: 'HRV measurements entered by the research team.',
+    rmssd: 'RMSSD (ms)',
+    baseline: '7-day average',
+    antrenor_title: 'Weekly Traffic Light',
+    antrenor_sub: 'Athlete status summary for the current week.',
+    athlete: 'Athlete',
+    hrv_status: 'HRV',
+    hooper_status: 'Hooper',
+    acwr_status: 'ACWR',
+    overall: 'Overall',
+    green: 'Good',
+    yellow: 'Watch',
+    red: 'Risk',
+    no_data_ant: 'Not enough data yet. Will appear as athletes enter data.',
+    overview: 'Overview',
+    athletes_tab: 'Athletes',
+    data_entry: 'Data Entry',
+    export: 'Export',
+    team_overview: 'Team Overview',
+    athlete_detail: 'Athlete Detail',
+    hrv_entry_title: 'HRV Data Entry',
+    add_athlete: 'Add Athlete',
+    name: 'First Name',
+    surname: 'Last Name',
+    jersey: 'Jersey #',
+    role: 'Role',
+    sporcu: 'Athlete',
+    antrenor: 'Coach',
+    arastirmaci: 'Researcher',
+    select_athlete: 'Select athlete',
+    date: 'Date',
+    resting_hr: 'Resting HR (bpm)',
+    lf_hf: 'LF/HF Ratio',
+    notes: 'Notes',
+    export_title: 'CSV Export',
+    export_desc: 'Select a date range and download as CSV.',
+    start_date: 'Start Date',
+    end_date: 'End Date',
+    export_hrv: 'Download HRV Data',
+    export_hooper: 'Download Hooper Data',
+    export_rpe: 'Download RPE Data',
+    setup_msg: 'Your account is not yet configured. Please contact the researcher.',
+    b6:'Rest', b7:'Very Light', b8:'Very Light', b9:'Light', b10:'Light',
+    b11:'Moderate', b12:'Moderate', b13:'Somewhat Hard', b14:'Somewhat Hard',
+    b15:'Hard', b16:'Hard', b17:'Very Hard', b18:'Very Hard',
+    b19:'Extremely Hard', b20:'Maximal',
+    questionnaires: 'Periodic Questionnaires',
+    quest_info: 'Questionnaires activated by the researcher will appear here.',
+    week_of: 'Week of',
+    no_athletes: 'No athletes added yet.',
+  }
+};
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let state = {
+  lang: localStorage.getItem('rc_lang') || 'tr',
+  user: null,
+  athlete: null,
+  sporcuTab: 'hooper',
+  researchTab: 'overview',
+  researchAthleteId: null,
+  athletes: [],
+  charts: {},
+};
+
+function t(key) { return LANG[state.lang][key] || LANG.tr[key] || key; }
+
+/* ============================================================
+   SUPABASE CLIENT
+   ============================================================ */
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+/* ============================================================
+   UTILITY
+   ============================================================ */
+function today() {
+  return new Date().toISOString().slice(0,10);
+}
+function formatDate(d) {
+  if (!d) return '-';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString(state.lang === 'tr' ? 'tr-TR' : 'en-GB', {day:'2-digit',month:'short',year:'numeric'});
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function dlCSV(filename, rows, headers) {
+  const csv = [headers.join(','), ...rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))].join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function showSuccess(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+/* ============================================================
+   TRAFFIC LIGHT LOGIC
+   ============================================================ */
+function acwrStatus(rpeRows) {
+  // rpeRows sorted ascending by date, each with session_load
+  if (rpeRows.length < 7) return null;
+  const now = new Date();
+  const msPerDay = 86400000;
+  const acute = rpeRows.filter(r => {
+    const d = new Date(r.session_date);
+    return (now - d) / msPerDay <= 7;
+  }).reduce((s, r) => s + (r.session_load || 0), 0);
+
+  const chronic28 = rpeRows.filter(r => {
+    const d = new Date(r.session_date);
+    return (now - d) / msPerDay <= 28;
+  }).reduce((s, r) => s + (r.session_load || 0), 0) / 4;
+
+  if (chronic28 === 0) return null;
+  const acwr = acute / chronic28;
+  if (acwr >= 0.8 && acwr <= 1.3) return 'green';
+  if (acwr >= 0.6 && acwr <= 1.5) return 'yellow';
+  return 'red';
+}
+
+function hrvStatus(hrvRows) {
+  if (hrvRows.length < 3) return null;
+  const sorted = [...hrvRows].sort((a,b) => a.reading_date > b.reading_date ? 1 : -1);
+  const recent = sorted.slice(-7);
+  const baseline = recent.slice(0,-1).reduce((s,r) => s + r.rmssd, 0) / (recent.length - 1);
+  const latest = recent[recent.length - 1].rmssd;
+  const diff = (baseline - latest) / baseline;
+  if (diff < 0.1) return 'green';
+  if (diff < 0.2) return 'yellow';
+  return 'red';
+}
+
+function hooperStatus(total) {
+  if (total == null) return null;
+  if (total <= 16) return 'green';
+  if (total <= 22) return 'yellow';
+  return 'red';
+}
+
+function overallStatus(a, b, c) {
+  const vals = [a,b,c].filter(x => x !== null);
+  if (vals.length === 0) return null;
+  if (vals.includes('red')) return 'red';
+  if (vals.includes('yellow')) return 'yellow';
+  return 'green';
+}
+
+function tlBadge(status) {
+  if (!status) return '<span class="muted">—</span>';
+  const labels = {green: t('green'), yellow: t('yellow'), red: t('red')};
+  return `<span class="tl-badge ${status}">${labels[status]}</span>`;
+}
+
+/* ============================================================
+   DATA LAYER
+   ============================================================ */
+async function getMyAthleteProfile() {
+  const { data, error } = await db.from('athletes').select('*').eq('user_id', state.user.id).single();
+  if (error) return null;
+  return data;
+}
+async function getAllAthletes() {
+  const { data } = await db.from('athletes').select('*').eq('active', true).order('jersey_number');
+  return data || [];
+}
+async function getHooperToday(athleteId) {
+  const { data } = await db.from('hooper_index').select('*').eq('athlete_id', athleteId).eq('entry_date', today()).single();
+  return data;
+}
+async function getHooperHistory(athleteId, days=30) {
+  const since = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
+  const { data } = await db.from('hooper_index').select('*').eq('athlete_id', athleteId).gte('entry_date', since).order('entry_date');
+  return data || [];
+}
+async function getHRVHistory(athleteId, days=30) {
+  const since = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
+  const { data } = await db.from('hrv_readings').select('*').eq('athlete_id', athleteId).gte('reading_date', since).order('reading_date');
+  return data || [];
+}
+async function getRPEHistory(athleteId, days=28) {
+  const since = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
+  const { data } = await db.from('session_rpe').select('*').eq('athlete_id', athleteId).gte('session_date', since).order('session_date');
+  return data || [];
+}
+async function saveHooper(athleteId, scores) {
+  const row = { athlete_id: athleteId, entry_date: today(), ...scores };
+  const { error } = await db.from('hooper_index').upsert(row, {onConflict:'athlete_id,entry_date'});
+  return !error;
+}
+async function saveRPE(athleteId, session) {
+  const { error } = await db.from('session_rpe').insert({ athlete_id: athleteId, session_date: today(), ...session });
+  return !error;
+}
+async function saveHRV(row) {
+  const { error } = await db.from('hrv_readings').upsert(row, {onConflict:'athlete_id,reading_date'});
+  return !error;
+}
+async function insertAthlete(a) {
+  const { data, error } = await db.from('athletes').insert(a).select().single();
+  return { data, error };
+}
+async function updateAthleteRole(id, role) {
+  const { error } = await db.from('athletes').update({role}).eq('id', id);
+  return !error;
+}
+async function getAllHRV(start, end) {
+  const q = db.from('hrv_readings').select('*, athletes(name,surname,jersey_number)').order('reading_date');
+  if (start) q.gte('reading_date', start);
+  if (end) q.lte('reading_date', end);
+  const { data } = await q;
+  return data || [];
+}
+async function getAllHooper(start, end) {
+  const q = db.from('hooper_index').select('*, athletes(name,surname,jersey_number)').order('entry_date');
+  if (start) q.gte('entry_date', start);
+  if (end) q.lte('entry_date', end);
+  const { data } = await q;
+  return data || [];
+}
+async function getAllRPE(start, end) {
+  const q = db.from('session_rpe').select('*, athletes(name,surname,jersey_number)').order('session_date');
+  if (start) q.gte('session_date', start);
+  if (end) q.lte('session_date', end);
+  const { data } = await q;
+  return data || [];
+}
+
+/* ============================================================
+   RENDER HELPERS
+   ============================================================ */
+function renderHeader(subtitle) {
+  return `
+  <div class="header">
+    <div class="header-brand">
+      ${t('app_title')}<small>${subtitle}</small>
+    </div>
+    <div class="header-actions">
+      <button class="lang-toggle" onclick="toggleLang()">${state.lang === 'tr' ? 'EN' : 'TR'}</button>
+      <button class="logout-btn" onclick="logout()">${t('logout')}</button>
+    </div>
+  </div>`;
+}
+
+function borgGrid(selected) {
+  const vals = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20];
+  return `<div class="borg-grid">${vals.map(v => `
+    <button class="borg-btn ${selected === v ? 'selected' : ''}" onclick="selectBorg(${v})">
+      <div class="borg-num">${v}</div>
+      <div class="borg-desc">${t('b'+v)}</div>
+    </button>`).join('')}</div>`;
+}
+
+/* ============================================================
+   SPORCU VIEW
+   ============================================================ */
+async function renderSporcu() {
+  const athlete = state.athlete;
+  const name = `${athlete.name} ${athlete.surname}`;
+  const dateStr = new Date().toLocaleDateString(state.lang === 'tr' ? 'tr-TR' : 'en-GB', {weekday:'long',day:'numeric',month:'long'});
+
+  // Load today's data
+  const hooToday = await getHooperToday(athlete.id);
+  const [hRPE, hHRV] = await Promise.all([getRPEHistory(athlete.id,7), getHRVHistory(athlete.id,30)]);
+
+  const acwr = acwrStatus(hRPE);
+  const hrv = hrvStatus(hHRV);
+  const hoop = hooToday ? hooperStatus(hooToday.total_score) : null;
+  const overall = overallStatus(acwr, hrv, hoop);
+
+  const appEl = document.getElementById('app');
+  appEl.innerHTML = `
+  ${renderHeader(name)}
+  <div class="main">
+    <p class="muted mb16">${dateStr}</p>
+
+    <!-- Status overview -->
+    <div class="status-overview">
+      <div class="status-box">
+        <div class="label">HRV</div>
+        <div class="value">${hrv ? '●' : '—'}</div>
+        <div class="sub" style="color:${hrv === 'green' ? 'var(--green)' : hrv === 'yellow' ? 'var(--yellow)' : hrv === 'red' ? 'var(--danger)' : 'var(--muted)'}">${hrv ? t(hrv) : t('no_data')}</div>
+      </div>
+      <div class="status-box">
+        <div class="label">Hooper</div>
+        <div class="value">${hooToday ? hooToday.total_score : '—'}</div>
+        <div class="sub" style="color:${hoop === 'green' ? 'var(--green)' : hoop === 'yellow' ? 'var(--yellow)' : hoop === 'red' ? 'var(--danger)' : 'var(--muted)'}">${hoop ? t(hoop) : t('no_data')}</div>
+      </div>
+      <div class="status-box">
+        <div class="label">ACWR</div>
+        <div class="value">${hRPE.length >= 7 ? '●' : '—'}</div>
+        <div class="sub" style="color:${acwr === 'green' ? 'var(--green)' : acwr === 'yellow' ? 'var(--yellow)' : acwr === 'red' ? 'var(--danger)' : 'var(--muted)'}">${acwr ? t(acwr) : t('no_data')}</div>
+      </div>
+      <div class="status-box">
+        <div class="label">${t('overall')}</div>
+        <div class="value">${overall ? (overall === 'green' ? '🟢' : overall === 'yellow' ? '🟡' : '🔴') : '—'}</div>
+        <div class="sub" style="color:${overall === 'green' ? 'var(--green)' : overall === 'yellow' ? 'var(--yellow)' : overall === 'red' ? 'var(--danger)' : 'var(--muted)'}">${overall ? t(overall) : t('no_data')}</div>
+      </div>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="tab-bar">
+      ${['hooper','rpe','hrv','quest'].map(tab => `
+        <button class="tab-btn ${state.sporcuTab === tab ? 'active' : ''}" onclick="switchSporcuTab('${tab}')">
+          ${t('tab_'+tab)}
+        </button>`).join('')}
+    </div>
+
+    <!-- Hooper tab -->
+    <div class="tab-content ${state.sporcuTab === 'hooper' ? 'active' : ''}" id="tab-hooper">
+      ${renderHooperTab(hooToday)}
+    </div>
+
+    <!-- RPE tab -->
+    <div class="tab-content ${state.sporcuTab === 'rpe' ? 'active' : ''}" id="tab-rpe">
+      ${renderRPETab()}
+    </div>
+
+    <!-- HRV tab -->
+    <div class="tab-content ${state.sporcuTab === 'hrv' ? 'active' : ''}" id="tab-hrv">
+      ${renderHRVTab(hHRV)}
+    </div>
+
+    <!-- Questionnaire tab -->
+    <div class="tab-content ${state.sporcuTab === 'quest' ? 'active' : ''}" id="tab-quest">
+      <div class="card">
+        <div class="card-title"><span class="icon">📋</span>${t('questionnaires')}</div>
+        <div class="alert alert-info">${t('quest_info')}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderHooperTab(existing) {
+  if (existing) {
+    return `<div class="card">
+      <div class="already-done">${t('already_hooper')}</div>
+      <div class="section-heading">${t('hooper_title')}</div>
+      <div class="status-overview" style="grid-template-columns:repeat(2,1fr)">
+        <div class="status-box"><div class="label">${t('fatigue')}</div><div class="value">${existing.fatigue}</div></div>
+        <div class="status-box"><div class="label">${t('stress')}</div><div class="value">${existing.stress}</div></div>
+        <div class="status-box"><div class="label">${t('muscle_soreness')}</div><div class="value">${existing.muscle_soreness}</div></div>
+        <div class="status-box"><div class="label">${t('sleep_quality')}</div><div class="value">${existing.sleep_quality}</div></div>
+      </div>
+      <div class="text-center" style="text-align:center;padding:8px 0">
+        <strong>${t('hooper_total')}: ${existing.total_score}/28</strong>
+        &nbsp;<span class="tl-badge ${hooperStatus(existing.total_score)}">${t(hooperStatus(existing.total_score))}</span>
+      </div>
+    </div>`;
+  }
+
+  const sliders = [
+    {key:'fatigue', lo:'fatigue_lo', hi:'fatigue_hi'},
+    {key:'stress', lo:'stress_lo', hi:'stress_hi'},
+    {key:'muscle_soreness', lo:'soreness_lo', hi:'soreness_hi'},
+    {key:'sleep_quality', lo:'sleep_lo', hi:'sleep_hi'},
+  ];
+
+  return `<div class="card">
+    <div class="card-title"><span class="icon">🌅</span>${t('hooper_title')}</div>
+    <p class="muted mb16">${t('hooper_sub')}</p>
+    <div id="hoop-success" class="success-banner">${t('saved_ok')}</div>
+    ${sliders.map(s => `
+    <div class="slider-wrap">
+      <div class="slider-label">${t(s.key)} <span id="hval-${s.key}">4</span></div>
+      <div class="slider-desc" id="hdesc-${s.key}">${t(s.lo)}</div>
+      <input type="range" min="1" max="7" value="4" id="hsl-${s.key}"
+        oninput="updateSlider('${s.key}','${s.lo}','${s.hi}')">
+      <div class="slider-ticks">${[1,2,3,4,5,6,7].map(n => `<span>${n}</span>`).join('')}</div>
+    </div>`).join('')}
+    <hr>
+    <div style="text-align:center;padding:4px 0 12px">
+      <strong id="hoop-total">${t('hooper_total')}: 16/28</strong>
+    </div>
+    <button class="btn-primary" onclick="submitHooper()">${t('save')}</button>
+  </div>`;
+}
+
+function renderRPETab() {
+  return `<div class="card">
+    <div class="card-title"><span class="icon">🏋️</span>${t('rpe_title')}</div>
+    <p class="muted mb16">${t('rpe_sub')}</p>
+    <div id="rpe-success" class="success-banner">${t('saved_ok')}</div>
+    <div class="form-row">
+      <label class="form-label">${t('session_name')}</label>
+      <input class="form-input" id="rpe-session-name" placeholder="${t('session_name_ph')}">
+    </div>
+    <div class="form-row">
+      <label class="form-label">${t('duration')}</label>
+      <input class="form-input" id="rpe-duration" type="number" min="1" max="300" placeholder="90">
+    </div>
+    <div class="form-row">
+      <label class="form-label">${t('rpe_label')}</label>
+      <p class="form-sublabel">${t('rpe_desc')}</p>
+      <div id="borg-container">${borgGrid(null)}</div>
+    </div>
+    <div id="load-preview" style="display:none;text-align:center;padding:8px;background:#f0f4f8;border-radius:8px;margin-bottom:12px;font-weight:700;color:var(--navy)"></div>
+    <button class="btn-primary" onclick="submitRPE()">${t('save')}</button>
+  </div>`;
+}
+
+function renderHRVTab(rows) {
+  if (!rows.length) return `<div class="card"><div class="empty"><div class="icon">📊</div><p>${t('no_data')}</p></div></div>`;
+  const baseline = rows.length >= 2 ? (rows.slice(-7).reduce((s,r)=>s+r.rmssd,0)/Math.min(rows.length,7)).toFixed(1) : null;
+  const latest = rows[rows.length-1];
+  return `<div class="card">
+    <div class="card-title"><span class="icon">💓</span>${t('hrv_title')}</div>
+    <p class="muted mb16">${t('hrv_sub')}</p>
+    <div class="status-overview" style="grid-template-columns:repeat(2,1fr);margin-bottom:12px">
+      <div class="status-box"><div class="label">${t('rmssd')}</div><div class="value">${latest.rmssd}</div><div class="sub">${formatDate(latest.reading_date)}</div></div>
+      <div class="status-box"><div class="label">${t('baseline')}</div><div class="value">${baseline || '—'}</div><div class="sub">ms</div></div>
+    </div>
+    <div class="chart-wrap"><canvas id="hrv-chart-sporcu"></canvas></div>
+  </div>`;
+}
+
+/* ============================================================
+   ANTRENÖR VIEW
+   ============================================================ */
+async function renderAntrenor() {
+  const athletes = await getAllAthletes();
+  const sporcular = athletes.filter(a => a.role === 'sporcu' && a.active);
+
+  const rows = await Promise.all(sporcular.map(async a => {
+    const [hrv, rpe, hoop] = await Promise.all([
+      getHRVHistory(a.id, 30),
+      getRPEHistory(a.id, 28),
+      getHooperHistory(a.id, 7)
+    ]);
+    const latestHoop = hoop.length ? hoop[hoop.length-1] : null;
+    const hs = latestHoop ? hooperStatus(latestHoop.total_score) : null;
+    const hs_hrv = hrvStatus(hrv);
+    const hs_acwr = acwrStatus(rpe);
+    const ov = overallStatus(hs_hrv, hs, hs_acwr);
+    return { a, hs_hrv, hs, hs_acwr, ov };
+  }));
+
+  const dateStr = new Date().toLocaleDateString(state.lang === 'tr' ? 'tr-TR' : 'en-GB', {day:'numeric',month:'long',year:'numeric'});
+
+  document.getElementById('app').innerHTML = `
+  ${renderHeader(state.lang === 'tr' ? 'Antrenör' : 'Coach')}
+  <div class="main-wide" style="padding:16px 20px">
+    <div class="card">
+      <div class="card-title"><span class="icon">🚦</span>${t('antrenor_title')}</div>
+      <p class="muted mb16">${t('antrenor_sub')} — ${dateStr}</p>
+      ${!sporcular.length ? `<div class="alert alert-info">${t('no_data_ant')}</div>` : `
+      <div class="table-scroll">
+        <table class="tl-table">
+          <thead><tr>
+            <th>${t('athlete')}</th>
+            <th>HRV</th>
+            <th>Hooper</th>
+            <th>ACWR</th>
+            <th>${t('overall')}</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(({a, hs_hrv, hs, hs_acwr, ov}) => `
+            <tr>
+              <td><strong>${a.name} ${a.surname}</strong>${a.jersey_number ? ` <small class="muted">#${a.jersey_number}</small>` : ''}</td>
+              <td>${tlBadge(hs_hrv)}</td>
+              <td>${tlBadge(hs)}</td>
+              <td>${tlBadge(hs_acwr)}</td>
+              <td>${tlBadge(ov)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`}
+    </div>
+    <div class="alert alert-info" style="font-size:.8rem">
+      ${state.lang === 'tr'
+        ? '🟢 İyi (normal aralık) &nbsp;|&nbsp; 🟡 Dikkat (hafif sapma) &nbsp;|&nbsp; 🔴 Risk (müdahale gerekebilir)'
+        : '🟢 Good (normal range) &nbsp;|&nbsp; 🟡 Watch (mild deviation) &nbsp;|&nbsp; 🔴 Risk (may need attention)'}
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   ARAŞTIRMACI VIEW
+   ============================================================ */
+async function renderArastirmaci() {
+  state.athletes = await getAllAthletes();
+  renderResearchShell();
+  await switchResearchTab(state.researchTab);
+}
+
+function renderResearchShell() {
+  const tabs = ['overview','athletes_tab','data_entry','export'];
+  document.getElementById('app').innerHTML = `
+  ${renderHeader(t('arastirmaci'))}
+  <div class="main-wide" style="padding:12px 16px">
+    <div class="dashboard-tabs">
+      ${tabs.map(tab => `<button class="dtab-btn ${state.researchTab === tab ? 'active' : ''}" onclick="switchResearchTab('${tab}')">${t(tab)}</button>`).join('')}
+    </div>
+    <div id="research-content"></div>
+  </div>`;
+}
+
+async function switchResearchTab(tab) {
+  state.researchTab = tab;
+  // Update tab buttons
+  document.querySelectorAll('.dtab-btn').forEach(b => b.classList.remove('active'));
+  const btn = [...document.querySelectorAll('.dtab-btn')].find(b => b.textContent.trim() === t(tab));
+  if (btn) btn.classList.add('active');
+
+  const content = document.getElementById('research-content');
+  if (!content) return;
+  content.innerHTML = `<div class="loading" style="min-height:200px"><div class="spinner"></div></div>`;
+
+  if (tab === 'overview') await renderOverviewTab(content);
+  else if (tab === 'athletes_tab') await renderAthletesTab(content);
+  else if (tab === 'data_entry') await renderDataEntryTab(content);
+  else if (tab === 'export') renderExportTab(content);
+}
+
+async function renderOverviewTab(el) {
+  const athletes = state.athletes.filter(a => a.role === 'sporcu' && a.active);
+
+  const rows = await Promise.all(athletes.map(async a => {
+    const [hrv, rpe, hoop] = await Promise.all([
+      getHRVHistory(a.id, 30), getRPEHistory(a.id, 28), getHooperHistory(a.id, 7)
+    ]);
+    const latestHoop = hoop.length ? hoop[hoop.length-1] : null;
+    const hs = latestHoop ? hooperStatus(latestHoop.total_score) : null;
+    return {
+      a,
+      hs_hrv: hrvStatus(hrv),
+      hs,
+      hs_acwr: acwrStatus(rpe),
+      ov: overallStatus(hrvStatus(hrv), hs, acwrStatus(rpe)),
+      latestRMSSD: hrv.length ? hrv[hrv.length-1].rmssd : null,
+      latestHooper: latestHoop ? latestHoop.total_score : null,
+    };
+  }));
+
+  el.innerHTML = `
+  <div class="card">
+    <div class="card-title"><span class="icon">🚦</span>${t('team_overview')}</div>
+    <div class="table-scroll">
+      <table class="tl-table">
+        <thead><tr>
+          <th>${t('athlete')}</th>
+          <th>HRV (ms)</th>
+          <th>Hooper</th>
+          <th>ACWR</th>
+          <th>${t('overall')}</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(({a, hs_hrv, hs, hs_acwr, ov, latestRMSSD, latestHooper}) => `
+          <tr style="cursor:pointer" onclick="showAthleteDetail('${a.id}')">
+            <td><strong>${a.name} ${a.surname}</strong>${a.jersey_number ? ` <small class="muted">#${a.jersey_number}</small>` : ''}</td>
+            <td>${latestRMSSD ? `<strong>${latestRMSSD}</strong> ${tlBadge(hs_hrv)}` : '<span class="muted">—</span>'}</td>
+            <td>${latestHooper ? `<strong>${latestHooper}/28</strong> ${tlBadge(hs)}` : '<span class="muted">—</span>'}</td>
+            <td>${tlBadge(hs_acwr)}</td>
+            <td>${tlBadge(ov)}</td>
+          </tr>`).join('')}
+          ${!rows.length ? `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">${t('no_athletes')}</td></tr>` : ''}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div id="athlete-detail-panel"></div>`;
+}
+
+async function showAthleteDetail(aid) {
+  const a = state.athletes.find(x => x.id === aid);
+  if (!a) return;
+  const panel = document.getElementById('athlete-detail-panel');
+  if (!panel) return;
+  panel.innerHTML = `<div class="card"><div class="loading" style="min-height:120px"><div class="spinner"></div></div></div>`;
+
+  const [hrv, hoop, rpe] = await Promise.all([
+    getHRVHistory(a.id, 60), getHooperHistory(a.id, 30), getRPEHistory(a.id, 28)
+  ]);
+
+  panel.innerHTML = `
+  <div class="card">
+    <div class="card-title"><span class="icon">👤</span>${a.name} ${a.surname} ${a.jersey_number ? `#${a.jersey_number}` : ''}</div>
+
+    <div class="section-heading" style="font-size:.85rem;margin-top:4px">HRV — RMSSD (ms)</div>
+    <div class="chart-wrap"><canvas id="chart-hrv-${a.id}"></canvas></div>
+
+    <div class="section-heading" style="font-size:.85rem;margin-top:16px">Hooper Index</div>
+    <div class="chart-wrap"><canvas id="chart-hoop-${a.id}"></canvas></div>
+
+    <div class="section-heading" style="font-size:.85rem;margin-top:16px">${state.lang === 'tr' ? 'Antrenman Yükü (RPE × Süre)' : 'Session Load (RPE × Duration)'}</div>
+    <div class="chart-wrap"><canvas id="chart-rpe-${a.id}"></canvas></div>
+  </div>`;
+
+  // Draw charts
+  setTimeout(() => {
+    drawLineChart(`chart-hrv-${a.id}`, hrv.map(r=>r.reading_date), hrv.map(r=>r.rmssd), 'RMSSD', 'rgba(26,60,94,1)', 'rgba(26,60,94,0.1)');
+    drawLineChart(`chart-hoop-${a.id}`, hoop.map(r=>r.entry_date), hoop.map(r=>r.total_score), 'Hooper', 'rgba(200,16,46,1)', 'rgba(200,16,46,0.1)', 4, 28);
+    drawBarChart(`chart-rpe-${a.id}`, rpe.map(r=>r.session_date), rpe.map(r=>r.session_load), state.lang === 'tr' ? 'Yük' : 'Load');
+  }, 100);
+}
+
+async function renderAthletesTab(el) {
+  const athletes = state.athletes;
+  el.innerHTML = `
+  <div class="card">
+    <div class="card-title"><span class="icon">👥</span>${t('athletes_tab')}</div>
+    <button class="btn-primary" style="margin-bottom:16px;width:auto;padding:10px 20px" onclick="showAddAthleteForm()">${t('add_athlete')}</button>
+    <div id="add-athlete-form" style="display:none;background:#f8fafc;border-radius:10px;padding:16px;margin-bottom:16px">
+      <div class="form-row">
+        <label class="form-label">${t('name')}</label>
+        <input class="form-input" id="new-name">
+      </div>
+      <div class="form-row">
+        <label class="form-label">${t('surname')}</label>
+        <input class="form-input" id="new-surname">
+      </div>
+      <div class="form-row">
+        <label class="form-label">${t('email')}</label>
+        <input class="form-input" id="new-email" type="email">
+      </div>
+      <div class="form-row">
+        <label class="form-label">${t('jersey')}</label>
+        <input class="form-input" id="new-jersey" type="number" min="1" max="99">
+      </div>
+      <div class="form-row">
+        <label class="form-label">${t('role')}</label>
+        <select class="form-select" id="new-role">
+          <option value="sporcu">${t('sporcu')}</option>
+          <option value="antrenor">${t('antrenor')}</option>
+          <option value="arastirmaci">${t('arastirmaci')}</option>
+        </select>
+      </div>
+      <div id="add-athlete-err" class="alert alert-err" style="display:none"></div>
+      <div class="flex-row">
+        <button class="btn-primary" style="width:auto;padding:10px 20px" onclick="submitAddAthlete()">${t('save')}</button>
+        <button class="btn-secondary" onclick="document.getElementById('add-athlete-form').style.display='none'">${t('cancel')}</button>
+      </div>
+    </div>
+    <div>
+      ${athletes.map(a => `
+      <div class="athlete-row">
+        <div class="athlete-num">${a.jersey_number || '?'}</div>
+        <div class="athlete-info">
+          <div class="name">${a.name} ${a.surname}</div>
+          <div class="role-tag">${t(a.role)} · ${a.email || ''}</div>
+        </div>
+        <select class="form-select" style="width:120px;padding:6px 8px;font-size:.8rem" onchange="changeRole('${a.id}', this.value)">
+          <option value="sporcu" ${a.role==='sporcu'?'selected':''}>${t('sporcu')}</option>
+          <option value="antrenor" ${a.role==='antrenor'?'selected':''}>${t('antrenor')}</option>
+          <option value="arastirmaci" ${a.role==='arastirmaci'?'selected':''}>${t('arastirmaci')}</option>
+        </select>
+      </div>`).join('')}
+      ${!athletes.length ? `<div class="empty"><div class="icon">👥</div><p>${t('no_athletes')}</p></div>` : ''}
+    </div>
+  </div>`;
+}
+
+async function renderDataEntryTab(el) {
+  const sporcular = state.athletes.filter(a => a.role === 'sporcu' && a.active);
+  el.innerHTML = `
+  <div class="card">
+    <div class="card-title"><span class="icon">📥</span>${t('hrv_entry_title')}</div>
+    <div id="hrv-entry-success" class="success-banner">${t('saved_ok')}</div>
+    <div class="form-row">
+      <label class="form-label">${t('select_athlete')}</label>
+      <select class="form-select" id="hrv-athlete">
+        <option value="">— ${t('select_athlete')} —</option>
+        ${sporcular.map(a => `<option value="${a.id}">${a.name} ${a.surname} ${a.jersey_number ? '#'+a.jersey_number : ''}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-row">
+      <label class="form-label">${t('date')}</label>
+      <input class="form-input" id="hrv-date" type="date" value="${today()}">
+    </div>
+    <div class="form-row">
+      <label class="form-label">${t('rmssd')}</label>
+      <input class="form-input" id="hrv-rmssd" type="number" step="0.01" placeholder="45.00">
+    </div>
+    <div class="form-row">
+      <label class="form-label">${t('resting_hr')}</label>
+      <input class="form-input" id="hrv-rhr" type="number" placeholder="52">
+    </div>
+    <div class="form-row">
+      <label class="form-label">${t('lf_hf')}</label>
+      <input class="form-input" id="hrv-lfhf" type="number" step="0.001" placeholder="1.200">
+    </div>
+    <div class="form-row">
+      <label class="form-label">${t('notes')}</label>
+      <textarea class="form-textarea" id="hrv-notes"></textarea>
+    </div>
+    <div id="hrv-err" class="alert alert-err" style="display:none"></div>
+    <button class="btn-primary" onclick="submitHRVEntry()">${t('save')}</button>
+  </div>`;
+}
+
+function renderExportTab(el) {
+  const thirtyAgo = new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+  el.innerHTML = `
+  <div class="card">
+    <div class="card-title"><span class="icon">📤</span>${t('export_title')}</div>
+    <p class="muted mb16">${t('export_desc')}</p>
+    <div class="flex-row" style="margin-bottom:16px">
+      <div>
+        <label class="form-label">${t('start_date')}</label>
+        <input class="form-input" id="exp-start" type="date" value="${thirtyAgo}">
+      </div>
+      <div>
+        <label class="form-label">${t('end_date')}</label>
+        <input class="form-input" id="exp-end" type="date" value="${today()}">
+      </div>
+    </div>
+    <div class="flex-row">
+      <button class="export-btn" onclick="exportData('hrv')">📊 ${t('export_hrv')}</button>
+      <button class="export-btn" onclick="exportData('hooper')">🌅 ${t('export_hooper')}</button>
+      <button class="export-btn" onclick="exportData('rpe')">🏋️ ${t('export_rpe')}</button>
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   CHARTS
+   ============================================================ */
+function chartDefaults() {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {legend:{display:false}, tooltip:{mode:'index',intersect:false}},
+    scales: {
+      x: {grid:{color:'rgba(0,0,0,0.04)'}, ticks:{font:{size:10}, maxTicksLimit:8}},
+      y: {grid:{color:'rgba(0,0,0,0.04)'}, ticks:{font:{size:10}}}
+    }
+  };
+}
+function drawLineChart(id, labels, data, label, color, fill, yMin, yMax) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const existing = Chart.getChart(el);
+  if (existing) existing.destroy();
+  const opts = chartDefaults();
+  if (yMin !== undefined) opts.scales.y.min = yMin;
+  if (yMax !== undefined) opts.scales.y.max = yMax;
+  new Chart(el, {
+    type:'line',
+    data:{labels, datasets:[{label, data, borderColor:color, backgroundColor:fill, fill:true, tension:0.3, pointRadius:3}]},
+    options:opts
+  });
+}
+function drawBarChart(id, labels, data, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const existing = Chart.getChart(el);
+  if (existing) existing.destroy();
+  new Chart(el, {
+    type:'bar',
+    data:{labels, datasets:[{label, data, backgroundColor:'rgba(26,60,94,0.65)', borderRadius:4}]},
+    options:chartDefaults()
+  });
+}
+
+/* ============================================================
+   EVENT HANDLERS — SPORCU
+   ============================================================ */
+window.switchSporcuTab = function(tab) {
+  state.sporcuTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  const btn = [...document.querySelectorAll('.tab-btn')].find(b => b.textContent.trim() === t('tab_'+tab));
+  if (btn) btn.classList.add('active');
+  const c = document.getElementById('tab-'+tab);
+  if (c) c.classList.add('active');
+
+  // Draw HRV chart when switching to HRV tab
+  if (tab === 'hrv') {
+    setTimeout(async () => {
+      const hrv = await getHRVHistory(state.athlete.id, 30);
+      drawLineChart('hrv-chart-sporcu', hrv.map(r=>r.reading_date), hrv.map(r=>r.rmssd), 'RMSSD', 'rgba(26,60,94,1)', 'rgba(26,60,94,0.1)');
+    }, 50);
+  }
+};
+
+window.updateSlider = function(key, loKey, hiKey) {
+  const sl = document.getElementById('hsl-'+key);
+  const val = parseInt(sl.value);
+  document.getElementById('hval-'+key).textContent = val;
+  const pct = (val-1)/6;
+  const desc = document.getElementById('hdesc-'+key);
+  if (pct <= 0.3) desc.textContent = t(loKey);
+  else if (pct >= 0.7) desc.textContent = t(hiKey);
+  else desc.textContent = '';
+  // Update total
+  let total = 0;
+  ['fatigue','stress','muscle_soreness','sleep_quality'].forEach(k => {
+    const s = document.getElementById('hsl-'+k);
+    if (s) total += parseInt(s.value);
+  });
+  const totEl = document.getElementById('hoop-total');
+  if (totEl) totEl.textContent = `${t('hooper_total')}: ${total}/28`;
+};
+
+window.submitHooper = async function() {
+  const scores = {};
+  ['fatigue','stress','muscle_soreness','sleep_quality'].forEach(k => {
+    const el = document.getElementById('hsl-'+k);
+    scores[k] = el ? parseInt(el.value) : 4;
+  });
+  const ok = await saveHooper(state.athlete.id, scores);
+  if (ok) {
+    showSuccess('hoop-success');
+    setTimeout(() => renderSporcu(), 1500);
+  }
+};
+
+let selectedBorg = null;
+window.selectBorg = function(val) {
+  selectedBorg = val;
+  document.getElementById('borg-container').innerHTML = borgGrid(val);
+  updateLoadPreview();
+};
+function updateLoadPreview() {
+  const dur = parseInt(document.getElementById('rpe-duration')?.value) || 0;
+  if (dur && selectedBorg) {
+    const load = dur * selectedBorg;
+    const prev = document.getElementById('load-preview');
+    if (prev) {
+      prev.style.display = 'block';
+      prev.textContent = `${t('session_load')}: ${load} AU`;
+    }
+  }
+}
+
+window.submitRPE = async function() {
+  const name = document.getElementById('rpe-session-name')?.value;
+  const dur = parseInt(document.getElementById('rpe-duration')?.value);
+  if (!dur || !selectedBorg) {
+    alert(state.lang === 'tr' ? 'Lütfen tüm alanları doldurun.' : 'Please fill all fields.');
+    return;
+  }
+  const ok = await saveRPE(state.athlete.id, {
+    session_name: name || null,
+    duration_minutes: dur,
+    rpe_score: selectedBorg
+  });
+  if (ok) {
+    showSuccess('rpe-success');
+    selectedBorg = null;
+    document.getElementById('rpe-duration').value = '';
+    document.getElementById('rpe-session-name').value = '';
+    document.getElementById('borg-container').innerHTML = borgGrid(null);
+    document.getElementById('load-preview').style.display = 'none';
+  }
+};
+
+/* ============================================================
+   EVENT HANDLERS — RESEARCHER
+   ============================================================ */
+window.switchResearchTab = async function(tab) { await switchResearchTab(tab); };
+
+window.showAthleteDetail = async function(id) { await showAthleteDetail(id); };
+
+window.showAddAthleteForm = function() {
+  const f = document.getElementById('add-athlete-form');
+  if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
+};
+
+window.submitAddAthlete = async function() {
+  const name = document.getElementById('new-name')?.value.trim();
+  const surname = document.getElementById('new-surname')?.value.trim();
+  const email = document.getElementById('new-email')?.value.trim();
+  const jersey = parseInt(document.getElementById('new-jersey')?.value) || null;
+  const role = document.getElementById('new-role')?.value || 'sporcu';
+  if (!name || !surname || !email) {
+    const err = document.getElementById('add-athlete-err');
+    if (err) { err.style.display='block'; err.textContent = state.lang === 'tr' ? 'Ad, soyad ve e-posta zorunludur.' : 'Name, surname and email are required.'; }
+    return;
+  }
+  const { data, error } = await insertAthlete({name, surname, email, jersey_number:jersey, role});
+  if (error) {
+    const err = document.getElementById('add-athlete-err');
+    if (err) { err.style.display='block'; err.textContent = error.message; }
+    return;
+  }
+  state.athletes = await getAllAthletes();
+  await switchResearchTab('athletes_tab');
+};
+
+window.changeRole = async function(id, role) {
+  await updateAthleteRole(id, role);
+  state.athletes = await getAllAthletes();
+};
+
+window.submitHRVEntry = async function() {
+  const athleteId = document.getElementById('hrv-athlete')?.value;
+  const date = document.getElementById('hrv-date')?.value;
+  const rmssd = parseFloat(document.getElementById('hrv-rmssd')?.value);
+  const rhr = parseInt(document.getElementById('hrv-rhr')?.value) || null;
+  const lfhf = parseFloat(document.getElementById('hrv-lfhf')?.value) || null;
+  const notes = document.getElementById('hrv-notes')?.value || null;
+  const errEl = document.getElementById('hrv-err');
+
+  if (!athleteId || !date || isNaN(rmssd)) {
+    if (errEl) { errEl.style.display='block'; errEl.textContent = state.lang === 'tr' ? 'Sporcu, tarih ve RMSSD zorunludur.' : 'Athlete, date and RMSSD are required.'; }
+    return;
+  }
+  if (errEl) errEl.style.display='none';
+  const ok = await saveHRV({athlete_id:athleteId, reading_date:date, rmssd, resting_hr:rhr, lf_hf:lfhf, notes});
+  if (ok) showSuccess('hrv-entry-success');
+};
+
+window.exportData = async function(type) {
+  const start = document.getElementById('exp-start')?.value;
+  const end = document.getElementById('exp-end')?.value;
+  if (type === 'hrv') {
+    const rows = await getAllHRV(start, end);
+    dlCSV('hrv_data.csv', rows.map(r => ({
+      Tarih: r.reading_date,
+      Sporcu: r.athletes ? `${r.athletes.name} ${r.athletes.surname}` : '',
+      FormNo: r.athletes?.jersey_number || '',
+      RMSSD: r.rmssd, LF_HF: r.lf_hf, IstirahatKH: r.resting_hr, Notlar: r.notes
+    })), ['Tarih','Sporcu','FormNo','RMSSD','LF_HF','IstirahatKH','Notlar']);
+  } else if (type === 'hooper') {
+    const rows = await getAllHooper(start, end);
+    dlCSV('hooper_data.csv', rows.map(r => ({
+      Tarih: r.entry_date,
+      Sporcu: r.athletes ? `${r.athletes.name} ${r.athletes.surname}` : '',
+      FormNo: r.athletes?.jersey_number || '',
+      Yorgunluk: r.fatigue, Stres: r.stress, KasAgrisi: r.muscle_soreness,
+      UykuKalitesi: r.sleep_quality, Toplam: r.total_score
+    })), ['Tarih','Sporcu','FormNo','Yorgunluk','Stres','KasAgrisi','UykuKalitesi','Toplam']);
+  } else if (type === 'rpe') {
+    const rows = await getAllRPE(start, end);
+    dlCSV('rpe_data.csv', rows.map(r => ({
+      Tarih: r.session_date,
+      Sporcu: r.athletes ? `${r.athletes.name} ${r.athletes.surname}` : '',
+      FormNo: r.athletes?.jersey_number || '',
+      Antrenman: r.session_name, Sure_dk: r.duration_minutes,
+      RPE_Borg: r.rpe_score, Yuk: r.session_load
+    })), ['Tarih','Sporcu','FormNo','Antrenman','Sure_dk','RPE_Borg','Yuk']);
+  }
+};
+
+/* ============================================================
+   GLOBAL CONTROLS
+   ============================================================ */
+window.toggleLang = function() {
+  state.lang = state.lang === 'tr' ? 'en' : 'tr';
+  localStorage.setItem('rc_lang', state.lang);
+  document.documentElement.lang = state.lang;
+  route();
+};
+
+window.logout = async function() {
+  await db.auth.signOut();
+  state.user = null;
+  state.athlete = null;
+  route();
+};
+
+/* ============================================================
+   AUTH & ROUTING
+   ============================================================ */
+function renderLogin() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+  <div class="login-wrap">
+    <div>
+      <div class="login-card">
+        <div class="login-logo">
+          <h1>${t('app_title')}</h1>
+          <p>${t('app_sub')}</p>
+          <div class="login-stripe"></div>
+        </div>
+        <div id="login-err" class="login-err">${t('login_err')}</div>
+        <div class="form-group">
+          <label>${t('email')}</label>
+          <input type="email" id="l-email" autocomplete="email" placeholder="sporcu@example.com">
+        </div>
+        <div class="form-group">
+          <label>${t('password')}</label>
+          <input type="password" id="l-pass" autocomplete="current-password" placeholder="••••••••">
+        </div>
+        <button class="btn-primary" id="l-btn" onclick="doLogin()">${t('login_btn')}</button>
+      </div>
+      <div class="lang-switch-login">
+        <button class="lang-btn ${state.lang==='tr'?'active':''}" onclick="setLangLogin('tr')">Türkçe</button>
+        <button class="lang-btn ${state.lang==='en'?'active':''}" onclick="setLangLogin('en')">English</button>
+      </div>
+    </div>
+  </div>`;
+
+  document.getElementById('l-pass').addEventListener('keydown', e => {
+    if (e.key === 'Enter') window.doLogin();
+  });
+}
+
+window.setLangLogin = function(lang) {
+  state.lang = lang;
+  localStorage.setItem('rc_lang', lang);
+  document.documentElement.lang = lang;
+  renderLogin();
+};
+
+window.doLogin = async function() {
+  const email = document.getElementById('l-email')?.value.trim();
+  const pass  = document.getElementById('l-pass')?.value;
+  const btn   = document.getElementById('l-btn');
+  const err   = document.getElementById('login-err');
+  if (!email || !pass) return;
+  if (btn) { btn.disabled = true; btn.textContent = t('loading'); }
+  if (err) err.classList.remove('show');
+
+  const { data, error } = await db.auth.signInWithPassword({ email, password: pass });
+  if (error || !data.user) {
+    if (err) err.classList.add('show');
+    if (btn) { btn.disabled = false; btn.textContent = t('login_btn'); }
+    return;
+  }
+  state.user = data.user;
+  await loadAthleteProfile();
+  route();
+};
+
+async function loadAthleteProfile() {
+  state.athlete = await getMyAthleteProfile();
+}
+
+async function route() {
+  const app = document.getElementById('app');
+  if (!state.user) { renderLogin(); return; }
+  if (!state.athlete) {
+    app.innerHTML = renderHeader('—') + `<div class="main"><div class="alert alert-warn">${t('setup_msg')}</div></div>`;
+    return;
+  }
+  const role = state.athlete.role;
+  if (role === 'sporcu') await renderSporcu();
+  else if (role === 'antrenor') await renderAntrenor();
+  else if (role === 'arastirmaci') await renderArastirmaci();
+  else {
+    app.innerHTML = renderHeader('—') + `<div class="main"><div class="alert alert-warn">${t('setup_msg')}</div></div>`;
+  }
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+// ============================================================
+// SERVICE WORKER — register for PWA installability
+// ============================================================
+if ('serviceWorker' in navigator) {
+  // Inline service worker via blob so no separate sw.js file is needed
+  const swCode = `
+const CACHE = 'rc-v1';
+const SHELL = ['/', '/index.html'];
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL).catch(() => {})));
+  self.skipWaiting();
+});
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))));
+  self.clients.claim();
+});
+self.addEventListener('fetch', e => {
+  // Network-first for Supabase API calls; cache-first for shell
+  if (e.request.url.includes('supabase.co')) return;
+  e.respondWith(
+    fetch(e.request).catch(() => caches.match(e.request).then(r => r || fetch(e.request)))
+  );
+});`;
+  const blob = new Blob([swCode], {type: 'application/javascript'});
+  const swUrl = URL.createObjectURL(blob);
+  navigator.serviceWorker.register(swUrl).catch(() => {});
+}
+
+async function init() {
+  document.documentElement.lang = state.lang;
+  const { data: { session } } = await db.auth.getSession();
+  if (session) {
+    state.user = session.user;
+    await loadAthleteProfile();
+  }
+  await route();
+
+  // Listen for auth changes
+  db.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_OUT') {
+      state.user = null;
+      state.athlete = null;
+      renderLogin();
+    }
+  });
+}
+
+init();
+</script>
+</body>
+</html>
