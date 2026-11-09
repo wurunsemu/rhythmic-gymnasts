@@ -1298,7 +1298,7 @@ async function setAppSettings(key, value) {
 async function saveQuestResponse(athleteId, questType, answers, score) {
   const { error } = await db.from('questionnaire_responses').insert({
     athlete_id: athleteId,
-    quest_type: questType,
+    questionnaire_type: questType,
     response_date: today(),
     answers,
     score,
@@ -1308,7 +1308,7 @@ async function saveQuestResponse(athleteId, questType, answers, score) {
 }
 async function getMyQuestResponses(athleteId) {
   const { data } = await db.from('questionnaire_responses')
-    .select('quest_type, response_date')
+    .select('questionnaire_type, response_date')
     .eq('athlete_id', athleteId)
     .order('response_date', {ascending: false});
   return data || [];
@@ -2048,7 +2048,7 @@ async function loadQuestTab() {
     return;
   }
   const done = await getMyQuestResponses(state.athlete.id);
-  const doneTodaySet = new Set(done.filter(r => r.response_date === today()).map(r => r.quest_type));
+  const doneTodaySet = new Set(done.filter(r => r.response_date === today()).map(r => r.questionnaire_type));
   let html = '';
   activeTypes.forEach(qtype => {
     const def = QUESTIONNAIRES[qtype];
