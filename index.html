@@ -1121,17 +1121,28 @@ function formatDate(d) {
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+// Convert ISO date string (YYYY-MM-DD) → Turkish date format (DD.MM.YYYY)
+// Turkish Excel recognises DD.MM.YYYY as a date but won't silently convert plain ISO strings to wrong dates.
+function isoToTR(dateStr) {
+  if (!dateStr) return '';
+  const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(dateStr);
+}
 function dlCSV(filename, rows, headers) {
   // Semicolon separator for Turkish/European Excel locales; UTF-8 BOM so accented chars render correctly
   const SEP = ';';
-  function escCell(v) {
+  // Columns that hold ISO date strings (YYYY-MM-DD) — will be converted to DD.MM.YYYY
+  const DATE_COLS = new Set(['Tarih']);
+  function escCell(h, v) {
     if (v === null || v === undefined) return '';
-    const s = String(v);
-    // Wrap in quotes if contains sep, quote, newline
+    // Convert ISO date columns to Turkish format to prevent Excel misinterpreting them
+    const s = DATE_COLS.has(h) ? isoToTR(String(v)) : String(v);
     if (s.includes(SEP) || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
-  const lines = [headers.map(escCell).join(SEP), ...rows.map(r => headers.map(h => escCell(r[h] ?? '')).join(SEP))];
+  // Add sep= hint so Excel opens with the correct delimiter without an import wizard
+  const SEP_HINT = `sep=${SEP}`;
+  const lines = [SEP_HINT, headers.map(h => escCell(h, h)).join(SEP), ...rows.map(r => headers.map(h => escCell(h, r[h] ?? '')).join(SEP))];
   const BOM = '﻿';
   const csv = BOM + lines.join('\r\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
@@ -1284,10 +1295,23 @@ async function updateAthleteRole(id, role) {
   return !error;
 }
 async function getAllHRV(start, end) {
-  const q = db.from('hrv_readings').select('*, athletes(name,surname,jersey_number)').order('reading_date');
+  const q = db.from('hrv_readings')
+    .select('id, athlete_id, reading_date, mean_rr, rmssd, sdnn, nn50, pnn50, ti_nn, sd1, sd2, sd2_sd1, sampen, tp, lf, hf, lf_hf, lf_norm, hf_norm, resting_hr, interval_count, notes, athletes(name,surname,jersey_number)')
+    .order('reading_date');
   if (start) q.gte('reading_date', start);
   if (end) q.lte('reading_date', end);
   const { data } = await q;
+  return data || [];
+}
+async function deleteEntry(table, id) {
+  const { error } = await db.from(table).delete().eq('id', id);
+  return !error;
+}
+async function getRecentEntries(table, dateCol, limit = 50) {
+  const { data } = await db.from(table)
+    .select(`id, ${dateCol}, athletes(name,surname,jersey_number), *`)
+    .order(dateCol, { ascending: false })
+    .limit(limit);
   return data || [];
 }
 async function getAllHooper(start, end) {
@@ -1384,12 +1408,15 @@ async function renderSporcu() {
 
   // Load today's data
   const hooToday = await getHooperToday(athlete.id);
-  const [hRPE, hHRV] = await Promise.all([getRPEHistory(athlete.id,7), getHRVHistory(athlete.id,30)]);
+  const [hRPE, hHRV] = await Promise.all([getRPEHistory(athlete.id,28), getHRVHistory(athlete.id,30)]);
 
   const acwr = acwrStatus(hRPE);
   const hrv = hrvStatus(hHRV);
   const hoop = hooToday ? hooperStatus(hooToday.total_score) : null;
   const overall = overallStatus(acwr, hrv, hoop);
+  // Latest HRV reading for display even when status threshold not met
+  const sortedHRV = [...hHRV].sort((a,b) => a.reading_date > b.reading_date ? 1 : -1);
+  const latestHRV = sortedHRV.length > 0 ? sortedHRV[sortedHRV.length - 1] : null;
 
   const appEl = document.getElementById('app');
   appEl.innerHTML = `
@@ -1401,8 +1428,8 @@ async function renderSporcu() {
     <div class="status-overview">
       <div class="status-box">
         <div class="label">HRV</div>
-        <div class="value">${hrv ? '●' : '—'}</div>
-        <div class="sub" style="color:${hrv === 'green' ? 'var(--green)' : hrv === 'yellow' ? 'var(--yellow)' : hrv === 'red' ? 'var(--danger)' : 'var(--muted)'}">${hrv ? t(hrv) : t('no_data')}</div>
+        <div class="value" style="font-size:${latestHRV ? '1.1rem' : '1.5rem'}">${hrv ? '●' : (latestHRV ? latestHRV.rmssd?.toFixed(1) + '<span style="font-size:.6rem;opacity:.7"> ms</span>' : '—')}</div>
+        <div class="sub" style="color:${hrv === 'green' ? 'var(--green)' : hrv === 'yellow' ? 'var(--yellow)' : hrv === 'red' ? 'var(--danger)' : 'var(--muted)'}">${hrv ? t(hrv) : (latestHRV ? 'RMSSD' : t('no_data'))}</div>
       </div>
       <div class="status-box">
         <div class="label">Hooper</div>
@@ -1436,7 +1463,7 @@ async function renderSporcu() {
 
     <!-- RPE tab -->
     <div class="tab-content ${state.sporcuTab === 'rpe' ? 'active' : ''}" id="tab-rpe">
-      ${renderRPETab()}
+      ${renderRPETab(hRPE.slice(-7))}
     </div>
 
     <!-- HRV tab -->
@@ -1498,7 +1525,35 @@ function renderHooperTab(existing) {
   </div>`;
 }
 
-function renderRPETab() {
+function renderRPETab(recentRPE) {
+  recentRPE = recentRPE || [];
+  // Build history section for last 7 sessions
+  let historyHtml = '';
+  if (recentRPE.length > 0) {
+    const rows = [...recentRPE].sort((a,b) => b.session_date > a.session_date ? 1 : -1);
+    historyHtml = `<div class="card" style="margin-top:16px">
+      <div class="card-title"><span class="icon">📅</span>${t('rpe_history_title') || 'Son Antrenmanlar'}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.85rem">
+        <thead><tr style="color:var(--muted);border-bottom:1px solid #e5e7eb">
+          <th style="text-align:left;padding:6px 4px">${t('date') || 'Tarih'}</th>
+          <th style="text-align:left;padding:6px 4px">${t('session_name') || 'Antrenman'}</th>
+          <th style="text-align:center;padding:6px 4px">${t('duration') || 'Süre'}</th>
+          <th style="text-align:center;padding:6px 4px">RPE</th>
+          <th style="text-align:center;padding:6px 4px">${t('rpe_load') || 'Yük'}</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => `<tr style="border-bottom:1px solid #f3f4f6">
+            <td style="padding:6px 4px">${isoToTR(r.session_date)}</td>
+            <td style="padding:6px 4px">${r.session_name || '—'}</td>
+            <td style="text-align:center;padding:6px 4px">${r.duration_min ?? '—'} dk</td>
+            <td style="text-align:center;padding:6px 4px;font-weight:700">${r.rpe ?? '—'}</td>
+            <td style="text-align:center;padding:6px 4px;color:var(--navy);font-weight:600">${r.session_load ?? '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
   return `<div class="card">
     <div class="card-title"><span class="icon">🏋️</span>${t('rpe_title')}</div>
     <p class="muted mb16">${t('rpe_sub')}</p>
@@ -1518,7 +1573,7 @@ function renderRPETab() {
     </div>
     <div id="load-preview" style="display:none;text-align:center;padding:8px;background:#f0f4f8;border-radius:8px;margin-bottom:12px;font-weight:700;color:var(--navy)"></div>
     <button class="btn-primary" onclick="submitRPE()">${t('save')}</button>
-  </div>`;
+  </div>${historyHtml}`;
 }
 
 function renderHRVTab(rows) {
@@ -2066,8 +2121,75 @@ function renderExportTab(el) {
     <div class="flex-row" style="flex-wrap:wrap;gap:8px">
       ${questBtns}
     </div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="card-title"><span class="icon">🗑️</span>${state.lang==='tr'?'Yanlış Veri Sil':'Delete Wrong Entry'}</div>
+    <p class="muted mb16">${state.lang==='tr'?'Yanlış girilen kayıtları seçip silebilirsiniz. Silme işlemi geri alınamaz.':'Select and delete incorrectly entered records. Deletion cannot be undone.'}</p>
+    <div class="flex-row" style="flex-wrap:wrap;gap:8px;margin-bottom:16px">
+      <button class="btn-secondary" onclick="loadDeleteList('hrv_readings','reading_date','hrv')">📊 HRV</button>
+      <button class="btn-secondary" onclick="loadDeleteList('hooper_index','entry_date','hooper')">🌅 Hooper</button>
+      <button class="btn-secondary" onclick="loadDeleteList('session_rpe','session_date','rpe')">🏋️ RPE</button>
+      <button class="btn-secondary" onclick="loadDeleteList('questionnaire_responses','response_date','quest')">📋 Anket</button>
+    </div>
+    <div id="delete-list-area"></div>
   </div>`;
 }
+
+async function loadDeleteList(table, dateCol, type) {
+  const area = document.getElementById('delete-list-area');
+  if (!area) return;
+  area.innerHTML = `<div class="muted" style="padding:12px 0">${state.lang==='tr'?'Yükleniyor...':'Loading...'}</div>`;
+  const rows = await getRecentEntries(table, dateCol, 60);
+  if (!rows.length) {
+    area.innerHTML = `<div class="muted" style="padding:12px 0">${state.lang==='tr'?'Kayıt bulunamadı.':'No records found.'}</div>`;
+    return;
+  }
+  const headers = {
+    hrv:    ['Tarih','Sporcu','RMSSD','OrtKH'],
+    hooper: ['Tarih','Sporcu','Toplam','Yorgunluk','Stres'],
+    rpe:    ['Tarih','Sporcu','Antrenman','RPE','Süre'],
+    quest:  ['Tarih','Sporcu','Anket','Puan'],
+  };
+  const getLabel = (r) => {
+    const name = r.athletes ? `${r.athletes.name} ${r.athletes.surname}` : '—';
+    const date = isoToTR(r[dateCol]);
+    if (type==='hrv')    return `${date} — ${name} | RMSSD: ${r.rmssd ?? '—'} ms, KH: ${r.resting_hr ?? '—'} bpm`;
+    if (type==='hooper') return `${date} — ${name} | Toplam: ${r.total_score ?? '—'}`;
+    if (type==='rpe')    return `${date} — ${name} | ${r.session_name || '—'}, RPE ${r.rpe_score ?? '—'}, ${r.duration_minutes ?? '—'} dk`;
+    if (type==='quest')  return `${date} — ${name} | ${r.questionnaire_type ?? '—'}, Puan: ${r.score ?? '—'}`;
+    return date + ' — ' + name;
+  };
+  const listHTML = rows.map(r => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span style="flex:1;font-size:.82rem">${escHtml(getLabel(r))}</span>
+      <button class="btn-sm btn-red" onclick="confirmDelete('${table}','${r.id}',this)"
+        style="white-space:nowrap;flex-shrink:0">${state.lang==='tr'?'Sil':'Delete'}</button>
+    </div>`).join('');
+  area.innerHTML = `<div style="margin-top:8px">${listHTML}</div>`;
+}
+
+window.loadDeleteList = loadDeleteList;
+
+window.confirmDelete = async function(table, id, btn) {
+  const msg = state.lang==='tr' ? 'Bu kaydı silmek istediğinizden emin misiniz?' : 'Are you sure you want to delete this record?';
+  if (!confirm(msg)) return;
+  btn.disabled = true;
+  btn.textContent = state.lang==='tr' ? 'Siliniyor...' : 'Deleting...';
+  const ok = await deleteEntry(table, id);
+  if (ok) {
+    const row = btn.closest('div[style*="display:flex"]');
+    if (row) {
+      row.style.background = '#fef2f2';
+      row.style.textDecoration = 'line-through';
+      row.style.opacity = '0.5';
+      btn.textContent = state.lang==='tr' ? '✓ Silindi' : '✓ Deleted';
+    }
+  } else {
+    btn.disabled = false;
+    btn.textContent = state.lang==='tr' ? '✗ Hata' : '✗ Error';
+    setTimeout(() => { btn.textContent = state.lang==='tr' ? 'Sil' : 'Delete'; btn.disabled = false; }, 2500);
+  }
+};
 
 /* ============================================================
    CHARTS
@@ -2162,7 +2284,7 @@ async function loadQuestTab() {
 }
 
 window.startQuest = function(qtype) {
-  state.currentQuest = { type: qtype, page: 0, answers: {} };
+  state.currentQuest = { type: qtype, page: 0, answers: {}, answerIdx: {} };
   renderQuestForm();
 };
 
@@ -2185,9 +2307,9 @@ function renderQuestForm() {
       <div class="likert-wrap">
         ${scale.map((label, i) => {
           const val = vals[i];
-          const sel = q.answers[item.id] === val;
+          const sel = q.answerIdx[item.id] === i;
           return `<label class="likert-opt ${sel ? 'selected' : ''}">
-            <input type="radio" name="q${item.id}" value="${val}" onchange="selectAnswer(${item.id}, ${val})" ${sel ? 'checked' : ''} style="display:none">
+            <input type="radio" name="q${item.id}" value="${val}" data-idx="${i}" onchange="selectAnswer(${item.id}, ${val}, ${i})" ${sel ? 'checked' : ''} style="display:none">
             <span>${label}</span>
           </label>`;
         }).join('')}
@@ -2208,11 +2330,12 @@ function renderQuestForm() {
   </div>`;
 }
 
-window.selectAnswer = function(itemId, val) {
+window.selectAnswer = function(itemId, val, selectedIdx) {
   state.currentQuest.answers[itemId] = val;
+  state.currentQuest.answerIdx[itemId] = selectedIdx;
   document.querySelectorAll(`input[name="q${itemId}"]`).forEach(inp => {
     const lbl = inp.closest('.likert-opt');
-    if (lbl) lbl.classList.toggle('selected', parseInt(inp.value) === val);
+    if (lbl) lbl.classList.toggle('selected', parseInt(inp.dataset.idx) === selectedIdx);
   });
 };
 
@@ -2514,8 +2637,19 @@ window.saveRRResult = async function() {
     return;
   }
   if (saveErr) saveErr.style.display='none';
-  const { rmssd, meanHR, lfHf } = state.rrMetrics;
-  const ok = await saveHRV({ athlete_id: state.athlete.id, reading_date: today(), rmssd, resting_hr: meanHR, lf_hf: lfHf || null, notes: t('hrv_saved_file') });
+  const m = state.rrMetrics;
+  const ok = await saveHRV({
+    athlete_id: state.athlete.id, reading_date: today(),
+    mean_rr: m.meanRR, resting_hr: m.meanHR,
+    sdnn: m.sdnn, rmssd: m.rmssd,
+    nn50: m.nn50, pnn50: m.pnn50, ti_nn: m.tiNN,
+    sd1: m.sd1, sd2: m.sd2, sd2_sd1: m.sd2sd1,
+    sampen: m.sampen !== null ? Math.round(m.sampen * 1000) / 1000 : null,
+    tp: m.tp, lf: m.lf, hf: m.hf,
+    lf_hf: m.lfHf || null, lf_norm: m.lfNorm, hf_norm: m.hfNorm,
+    interval_count: m.count,
+    notes: t('hrv_saved_file'),
+  });
   if (ok) {
     document.getElementById('rr-save-success').style.display = 'block';
     const btn = document.getElementById('rr-save-btn');
@@ -2599,8 +2733,19 @@ window.saveRRResultAdmin = async function() {
     if (errDiv) { errDiv.textContent = state.lang==='tr' ? 'Sporcu ve tarih seçmelisiniz.' : 'Please select athlete and date.'; errDiv.style.display='block'; }
     return;
   }
-  const { rmssd, meanHR, lfHf } = state.rrMetricsAdmin;
-  const ok = await saveHRV({ athlete_id: athleteId, reading_date: date, rmssd, resting_hr: meanHR, lf_hf: lfHf || null, notes: t('hrv_saved_file') });
+  const m = state.rrMetricsAdmin;
+  const ok = await saveHRV({
+    athlete_id: athleteId, reading_date: date,
+    mean_rr: m.meanRR, resting_hr: m.meanHR,
+    sdnn: m.sdnn, rmssd: m.rmssd,
+    nn50: m.nn50, pnn50: m.pnn50, ti_nn: m.tiNN,
+    sd1: m.sd1, sd2: m.sd2, sd2_sd1: m.sd2sd1,
+    sampen: m.sampen !== null ? Math.round(m.sampen * 1000) / 1000 : null,
+    tp: m.tp, lf: m.lf, hf: m.hf,
+    lf_hf: m.lfHf || null, lf_norm: m.lfNorm, hf_norm: m.hfNorm,
+    interval_count: m.count,
+    notes: t('hrv_saved_file'),
+  });
   if (ok) {
     document.getElementById('rr-admin-save-success').style.display = 'block';
     const btn = document.getElementById('rr-admin-save-btn');
@@ -2615,11 +2760,29 @@ window.exportData = async function(type) {
   if (type === 'hrv') {
     const rows = await getAllHRV(start, end);
     dlCSV('hrv_data.csv', rows.map(r => ({
-      Tarih: r.reading_date,
-      Sporcu: r.athletes ? `${r.athletes.name} ${r.athletes.surname}` : '',
-      FormNo: r.athletes?.jersey_number || '',
-      RMSSD: r.rmssd, LF_HF: r.lf_hf, IstirahatKH: r.resting_hr, Notlar: r.notes
-    })), ['Tarih','Sporcu','FormNo','RMSSD','LF_HF','IstirahatKH','Notlar']);
+      Tarih:        r.reading_date,
+      Sporcu:       r.athletes ? `${r.athletes.name} ${r.athletes.surname}` : '',
+      FormNo:       r.athletes?.jersey_number || '',
+      Aralik_Sayisi: r.interval_count ?? '',
+      OrtRR_ms:     r.mean_rr ?? '',
+      OrtKH_bpm:    r.resting_hr ?? '',
+      SDNN_ms:      r.sdnn ?? '',
+      RMSSD_ms:     r.rmssd ?? '',
+      NN50:         r.nn50 ?? '',
+      pNN50_pct:    r.pnn50 ?? '',
+      TiNN_ms:      r.ti_nn ?? '',
+      SD1_ms:       r.sd1 ?? '',
+      SD2_ms:       r.sd2 ?? '',
+      SD2_SD1:      r.sd2_sd1 ?? '',
+      SampEn:       r.sampen ?? '',
+      TP_ms2:       r.tp ?? '',
+      LF_ms2:       r.lf ?? '',
+      HF_ms2:       r.hf ?? '',
+      LF_HF:        r.lf_hf ?? '',
+      LF_norm:      r.lf_norm ?? '',
+      HF_norm:      r.hf_norm ?? '',
+      Notlar:       r.notes ?? '',
+    })), ['Tarih','Sporcu','FormNo','Aralik_Sayisi','OrtRR_ms','OrtKH_bpm','SDNN_ms','RMSSD_ms','NN50','pNN50_pct','TiNN_ms','SD1_ms','SD2_ms','SD2_SD1','SampEn','TP_ms2','LF_ms2','HF_ms2','LF_HF','LF_norm','HF_norm','Notlar']);
   } else if (type === 'hooper') {
     const rows = await getAllHooper(start, end);
     dlCSV('hooper_data.csv', rows.map(r => ({
