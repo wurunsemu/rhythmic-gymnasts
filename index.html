@@ -1216,18 +1216,33 @@ async function getHooperToday(athleteId) {
 }
 async function getHooperHistory(athleteId, days=30) {
   const since = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
-  const { data } = await db.from('hooper_index').select('*').eq('athlete_id', athleteId).gte('entry_date', since).order('entry_date');
-  return data || [];
+  const result = await Promise.race([
+    db.from('hooper_index').select('*').eq('athlete_id', athleteId).gte('entry_date', since).order('entry_date'),
+    new Promise(r => setTimeout(() => r({data:null,error:{message:'hooper-timeout'}}), 6000))
+  ]);
+  if (result.error && result.error.message !== 'hooper-timeout') console.warn('[hooper] hata:', athleteId, result.error);
+  if (result.error && result.error.message === 'hooper-timeout') console.warn('[hooper] TIMEOUT sporcu:', athleteId);
+  return result.data || [];
 }
 async function getHRVHistory(athleteId, days=30) {
   const since = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
-  const { data } = await db.from('hrv_readings').select('*').eq('athlete_id', athleteId).gte('reading_date', since).order('reading_date');
-  return data || [];
+  const result = await Promise.race([
+    db.from('hrv_readings').select('*').eq('athlete_id', athleteId).gte('reading_date', since).order('reading_date'),
+    new Promise(r => setTimeout(() => r({data:null,error:{message:'hrv-timeout'}}), 6000))
+  ]);
+  if (result.error && result.error.message !== 'hrv-timeout') console.warn('[hrv] hata:', athleteId, result.error);
+  if (result.error && result.error.message === 'hrv-timeout') console.warn('[hrv] TIMEOUT sporcu:', athleteId);
+  return result.data || [];
 }
 async function getRPEHistory(athleteId, days=28) {
   const since = new Date(Date.now() - days*86400000).toISOString().slice(0,10);
-  const { data } = await db.from('session_rpe').select('*').eq('athlete_id', athleteId).gte('session_date', since).order('session_date');
-  return data || [];
+  const result = await Promise.race([
+    db.from('session_rpe').select('*').eq('athlete_id', athleteId).gte('session_date', since).order('session_date'),
+    new Promise(r => setTimeout(() => r({data:null,error:{message:'rpe-timeout'}}), 6000))
+  ]);
+  if (result.error && result.error.message !== 'rpe-timeout') console.warn('[rpe] hata:', athleteId, result.error);
+  if (result.error && result.error.message === 'rpe-timeout') console.warn('[rpe] TIMEOUT sporcu:', athleteId);
+  return result.data || [];
 }
 async function saveHooper(athleteId, scores) {
   const row = { athlete_id: athleteId, entry_date: today(), ...scores };
@@ -1651,24 +1666,33 @@ async function switchResearchTab(tab) {
 async function renderOverviewTab(el) {
   try {
     const athletes = state.athletes.filter(a => a.role === 'sporcu' && a.active);
-    console.log('[overview] athletes count:', athletes.length, 'state.athletes:', state.athletes.length);
+    console.log('[overview] başlıyor — sporcu sayısı:', athletes.length, '/ toplam:', state.athletes.length);
+    if (!athletes.length) {
+      el.innerHTML = `<div class="card"><p class="muted" style="text-align:center;padding:24px">${t('no_athletes')}</p></div>`;
+      return;
+    }
 
-    const rows = await Promise.all(athletes.map(async a => {
-      const [hrv, rpe, hoop] = await Promise.all([
-        getHRVHistory(a.id, 30), getRPEHistory(a.id, 28), getHooperHistory(a.id, 7)
-      ]);
-      const latestHoop = hoop.length ? hoop[hoop.length-1] : null;
-      const hs = latestHoop ? hooperStatus(latestHoop.total_score) : null;
-      return {
-        a,
-        hs_hrv: hrvStatus(hrv),
-        hs,
-        hs_acwr: acwrStatus(rpe),
-        ov: overallStatus(hrvStatus(hrv), hs, acwrStatus(rpe)),
-        latestRMSSD: hrv.length ? hrv[hrv.length-1].rmssd : null,
-        latestHooper: latestHoop ? latestHoop.total_score : null,
-      };
-    }));
+    const rows = await Promise.race([
+      Promise.all(athletes.map(async a => {
+        console.log('[overview] sorgulanıyor:', a.name, a.surname, '—', a.id);
+        const [hrv, rpe, hoop] = await Promise.all([
+          getHRVHistory(a.id, 30), getRPEHistory(a.id, 28), getHooperHistory(a.id, 7)
+        ]);
+        console.log('[overview] tamamlandı:', a.name, '— hrv:', hrv.length, 'rpe:', rpe.length, 'hoop:', hoop.length);
+        const latestHoop = hoop.length ? hoop[hoop.length-1] : null;
+        const hs = latestHoop ? hooperStatus(latestHoop.total_score) : null;
+        return {
+          a,
+          hs_hrv: hrvStatus(hrv),
+          hs,
+          hs_acwr: acwrStatus(rpe),
+          ov: overallStatus(hrvStatus(hrv), hs, acwrStatus(rpe)),
+          latestRMSSD: hrv.length ? hrv[hrv.length-1].rmssd : null,
+          latestHooper: latestHoop ? latestHoop.total_score : null,
+        };
+      })),
+      new Promise(r => setTimeout(() => { console.warn('[overview] DIŞ TIMEOUT — 15 saniye doldu'); r([]); }, 15000))
+    ]);
 
     el.innerHTML = `
     <div class="card">
