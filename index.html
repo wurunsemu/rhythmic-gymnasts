@@ -1791,9 +1791,18 @@ async function renderAthletesTab(el) {
 
 async function renderDataEntryTab(el) {
   const sporcular = state.athletes.filter(a => a.role === 'sporcu' && a.active);
-  // Load active questionnaire settings
-  const qSettings = await getAppSettings('active_questionnaires');
-  const activeQTypes = (qSettings && qSettings.types) ? qSettings.types : [];
+  // Load active questionnaire settings — timeout failsafe if table missing
+  let activeQTypes = [];
+  try {
+    const qSettings = await Promise.race([
+      getAppSettings('active_questionnaires'),
+      new Promise(r => setTimeout(() => r(null), 5000))
+    ]);
+    activeQTypes = (qSettings && qSettings.types) ? qSettings.types : [];
+  } catch(e) {
+    console.warn('[renderDataEntryTab] app_settings okunamadı:', e);
+    activeQTypes = [];
+  }
   const questManageHtml = `
   <div class="card" style="margin-bottom:1rem">
     <div class="card-title"><span class="icon">📋</span>${t('quest_manage')}</div>
