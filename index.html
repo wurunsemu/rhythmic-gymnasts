@@ -1133,10 +1133,20 @@ function dlCSV(filename, rows, headers) {
   const SEP = ';';
   // Columns that hold ISO date strings (YYYY-MM-DD) — will be converted to DD.MM.YYYY
   const DATE_COLS = new Set(['Tarih']);
+  // Text columns: never convert decimal separator
+  const TEXT_COLS = new Set(['Sporcu','FormNo','Notlar','Antrenman','Anket_Turu']);
   function escCell(h, v) {
     if (v === null || v === undefined) return '';
-    // Convert ISO date columns to Turkish format to prevent Excel misinterpreting them
-    const s = DATE_COLS.has(h) ? isoToTR(String(v)) : String(v);
+    if (DATE_COLS.has(h)) {
+      const s = isoToTR(String(v));
+      return s;
+    }
+    // For numeric values: use comma as decimal separator (Turkish Excel locale)
+    // so e.g. 13.01 becomes 13,01 and isn't misread as a date
+    if (!TEXT_COLS.has(h) && typeof v === 'number') {
+      return String(v).replace('.', ',');
+    }
+    const s = String(v);
     if (s.includes(SEP) || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
@@ -1163,7 +1173,7 @@ function showSuccess(id) {
    ============================================================ */
 function acwrStatus(rpeRows) {
   // rpeRows sorted ascending by date, each with session_load
-  if (rpeRows.length < 7) return null;
+  if (rpeRows.length < 1) return null;
   const now = new Date();
   const msPerDay = 86400000;
   const acute = rpeRows.filter(r => {
@@ -1438,7 +1448,7 @@ async function renderSporcu() {
       </div>
       <div class="status-box">
         <div class="label">ACWR</div>
-        <div class="value">${hRPE.length >= 7 ? '●' : '—'}</div>
+        <div class="value">${acwr ? '●' : '—'}</div>
         <div class="sub" style="color:${acwr === 'green' ? 'var(--green)' : acwr === 'yellow' ? 'var(--yellow)' : acwr === 'red' ? 'var(--danger)' : 'var(--muted)'}">${acwr ? t(acwr) : t('no_data')}</div>
       </div>
       <div class="status-box">
@@ -1545,8 +1555,8 @@ function renderRPETab(recentRPE) {
           ${rows.map(r => `<tr style="border-bottom:1px solid #f3f4f6">
             <td style="padding:6px 4px">${isoToTR(r.session_date)}</td>
             <td style="padding:6px 4px">${r.session_name || '—'}</td>
-            <td style="text-align:center;padding:6px 4px">${r.duration_min ?? '—'} dk</td>
-            <td style="text-align:center;padding:6px 4px;font-weight:700">${r.rpe ?? '—'}</td>
+            <td style="text-align:center;padding:6px 4px">${r.duration_minutes ?? '—'} dk</td>
+            <td style="text-align:center;padding:6px 4px;font-weight:700">${r.rpe_score ?? '—'}</td>
             <td style="text-align:center;padding:6px 4px;color:var(--navy);font-weight:600">${r.session_load ?? '—'}</td>
           </tr>`).join('')}
         </tbody>
