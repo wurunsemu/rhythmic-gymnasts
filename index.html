@@ -1302,6 +1302,7 @@ async function saveQuestResponse(athleteId, questType, answers, score) {
     answers,
     score,
   });
+  if (error) console.error('[saveQuestResponse] hata:', error.code, error.message, '— athlete_id:', athleteId);
   return !error;
 }
 async function getMyQuestResponses(athleteId) {
@@ -2128,6 +2129,7 @@ window.questNext = function() {
   if (unanswered.length > 0) {
     const err = document.getElementById('quest-err');
     if (err) { err.style.display='block'; err.textContent = state.lang==='tr' ? 'Lütfen tüm soruları yanıtlayın.' : 'Please answer all questions.'; }
+    window.scrollTo(0, 0);
     return;
   }
   q.page++;
@@ -2150,10 +2152,12 @@ window.submitQuest = async function() {
   if (unanswered.length > 0) {
     const err = document.getElementById('quest-err');
     if (err) { err.style.display='block'; err.textContent = state.lang==='tr' ? 'Lütfen tüm soruları yanıtlayın.' : 'Please answer all questions.'; }
+    window.scrollTo(0, 0);
     return;
   }
   const total = Object.values(q.answers).reduce((s, v) => s + v, 0);
-  const ok = await saveQuestResponse(state.athlete.id, q.type, q.answers, total);
+  console.log('[submitQuest] kaydediliyor — athlete:', state.athlete?.id, 'type:', q.type, 'toplam puan:', total);
+  const ok = await saveQuestResponse(state.athlete?.id, q.type, q.answers, total);
   if (ok) {
     state.currentQuest = null;
     await renderSporcu();
@@ -2169,6 +2173,15 @@ window.submitQuest = async function() {
         inner.prepend(msg);
       }
     }, 200);
+  } else {
+    const err = document.getElementById('quest-err');
+    if (err) {
+      err.style.display = 'block';
+      err.textContent = state.lang === 'tr'
+        ? '⚠ Anket kaydedilemedi. Konsolda hata detayını görün veya sayfayı yenileyip tekrar deneyin.'
+        : '⚠ Could not save questionnaire. Check console for error details.';
+      window.scrollTo(0, 0);
+    }
   }
 };
 
