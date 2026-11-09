@@ -1196,8 +1196,19 @@ async function getMyAthleteProfile() {
   return data;
 }
 async function getAllAthletes() {
-  const { data } = await db.from('athletes').select('*').eq('active', true).order('jersey_number');
-  return data || [];
+  try {
+    const result = await Promise.race([
+      db.from('athletes').select('*').eq('active', true).order('jersey_number'),
+      new Promise(r => setTimeout(() => r({data: null, error: {message: 'timeout'}}), 8000))
+    ]);
+    if (result.error) {
+      console.warn('[getAllAthletes] DB hatası:', result.error.code, result.error.message);
+    }
+    return result.data || [];
+  } catch(e) {
+    console.warn('[getAllAthletes] hata:', e);
+    return [];
+  }
 }
 async function getHooperToday(athleteId) {
   const { data } = await db.from('hooper_index').select('*').eq('athlete_id', athleteId).eq('entry_date', today()).single();
@@ -1594,9 +1605,10 @@ async function renderArastirmaci() {
   renderResearchShell();
   const preload = document.getElementById('research-content');
   if (preload) preload.innerHTML = `<div class="loading" style="min-height:200px"><div class="spinner"></div></div>`;
-  // Load athletes data, then render the initial tab
+  // Load athletes data with timeout, then render the initial tab
   state.athletes = await getAllAthletes();
-  await switchResearchTab(state.researchTab);
+  console.log('[renderArastirmaci] athletes yüklendi, adet:', state.athletes.length);
+  await switchResearchTab(state.researchTab || 'overview');
 }
 
 function renderResearchShell() {
