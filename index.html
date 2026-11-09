@@ -1590,8 +1590,12 @@ async function renderAntrenor() {
    ARAŞTIRMACI VIEW
    ============================================================ */
 async function renderArastirmaci() {
-  state.athletes = await getAllAthletes();
+  // Show the shell immediately so tab buttons are visible/clickable right away
   renderResearchShell();
+  const preload = document.getElementById('research-content');
+  if (preload) preload.innerHTML = `<div class="loading" style="min-height:200px"><div class="spinner"></div></div>`;
+  // Load athletes data, then render the initial tab
+  state.athletes = await getAllAthletes();
   await switchResearchTab(state.researchTab);
 }
 
