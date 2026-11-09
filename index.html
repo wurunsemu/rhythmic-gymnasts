@@ -1122,8 +1122,19 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 function dlCSV(filename, rows, headers) {
-  const csv = [headers.join(','), ...rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))].join('\n');
-  const blob = new Blob([csv], {type:'text/csv'});
+  // Semicolon separator for Turkish/European Excel locales; UTF-8 BOM so accented chars render correctly
+  const SEP = ';';
+  function escCell(v) {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    // Wrap in quotes if contains sep, quote, newline
+    if (s.includes(SEP) || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  const lines = [headers.map(escCell).join(SEP), ...rows.map(r => headers.map(h => escCell(r[h] ?? '')).join(SEP))];
+  const BOM = '﻿';
+  const csv = BOM + lines.join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename; a.click();
@@ -2027,6 +2038,10 @@ async function renderDataEntryTab(el) {
 
 function renderExportTab(el) {
   const thirtyAgo = new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+  const questBtns = Object.entries(QUESTIONNAIRES).map(([key, def]) => {
+    const name = state.lang === 'tr' ? def.name_tr : def.name_en;
+    return `<button class="export-btn" style="font-size:.78rem" onclick="exportData('quest_${key}')">📋 ${name}</button>`;
+  }).join('');
   el.innerHTML = `
   <div class="card">
     <div class="card-title"><span class="icon">📤</span>${t('export_title')}</div>
@@ -2041,11 +2056,15 @@ function renderExportTab(el) {
         <input class="form-input" id="exp-end" type="date" value="${today()}">
       </div>
     </div>
-    <div class="flex-row">
+    <div style="margin-bottom:8px;font-weight:700;font-size:.85rem;color:var(--navy)">${state.lang==='tr'?'Genel Veriler':'General Data'}</div>
+    <div class="flex-row" style="flex-wrap:wrap;gap:8px;margin-bottom:16px">
       <button class="export-btn" onclick="exportData('hrv')">📊 ${t('export_hrv')}</button>
       <button class="export-btn" onclick="exportData('hooper')">🌅 ${t('export_hooper')}</button>
       <button class="export-btn" onclick="exportData('rpe')">🏋️ ${t('export_rpe')}</button>
-      <button class="export-btn" onclick="exportData('quest')">📋 ${t('export_quest')}</button>
+    </div>
+    <div style="margin-bottom:8px;font-weight:700;font-size:.85rem;color:var(--navy)">${state.lang==='tr'?'Anket Verileri (ayrı ayrı)':'Questionnaire Data (separate)'}</div>
+    <div class="flex-row" style="flex-wrap:wrap;gap:8px">
+      ${questBtns}
     </div>
   </div>`;
 }
@@ -2619,34 +2638,57 @@ window.exportData = async function(type) {
       Antrenman: r.session_name, Sure_dk: r.duration_minutes,
       RPE_Borg: r.rpe_score, Yuk: r.session_load
     })), ['Tarih','Sporcu','FormNo','Antrenman','Sure_dk','RPE_Borg','Yuk']);
-  } else if (type === 'quest') {
-    const rows = await getAllQuestResponses(start, end);
-    // Build dynamic item columns from QUESTIONNAIRES definitions
-    const allItems = {};
-    Object.entries(QUESTIONNAIRES).forEach(([qtype, def]) => {
-      def.items.forEach(item => { allItems[`${qtype}_${item.id}`] = `${qtype}_M${item.id}`; });
-    });
-    const baseKeys = ['Tarih','Sporcu','FormNo','AnketTipi','ToplamPuan'];
+  } else if (type === 'quest' || type.startsWith('quest_')) {
+    // If type is 'quest_Rosenberg' filter to that type; 'quest' alone = all
+    const filterType = type.startsWith('quest_') ? type.slice(6) : null;
+    const allRows = await getAllQuestResponses(start, end);
+    const rows = filterType ? allRows.filter(r => r.questionnaire_type === filterType) : allRows;
+
+    if (!rows.length) {
+      alert(state.lang === 'tr' ? 'Seçili tarih aralığında veri bulunamadı.' : 'No data found for the selected date range.');
+      return;
+    }
+
+    // For a single questionnaire type: item columns as M1, M2, ...
+    // For all types combined: AnketTipi_M1 naming
+    const singleType = filterType || (new Set(rows.map(r => r.questionnaire_type)).size === 1 ? rows[0].questionnaire_type : null);
+    const def = singleType ? QUESTIONNAIRES[singleType] : null;
+
+    const baseKeys = filterType
+      ? ['Tarih','Sporcu','FormNo','ToplamPuan']
+      : ['Tarih','Sporcu','FormNo','AnketTipi','ToplamPuan'];
+
     const mapped = rows.map(r => {
-      const def = QUESTIONNAIRES[r.questionnaire_type];
+      const rDef = QUESTIONNAIRES[r.questionnaire_type];
       const base = {
         Tarih: r.response_date,
         Sporcu: r.athletes ? `${r.athletes.name} ${r.athletes.surname}` : '',
         FormNo: r.athletes?.jersey_number || '',
-        AnketTipi: r.questionnaire_type,
         ToplamPuan: r.score ?? '',
       };
-      if (def && r.answers) {
-        def.items.forEach(item => {
-          base[`${r.questionnaire_type}_M${item.id}`] = r.answers[item.id] ?? '';
+      if (!filterType) base['AnketTipi'] = r.questionnaire_type;
+      if (rDef && r.answers) {
+        rDef.items.forEach(item => {
+          const colName = filterType ? `M${item.id}` : `${r.questionnaire_type}_M${item.id}`;
+          base[colName] = r.answers[item.id] ?? '';
         });
       }
       return base;
     });
-    // Collect all unique column keys that actually appear
-    const allKeys = [...baseKeys];
-    mapped.forEach(row => { Object.keys(row).forEach(k => { if (!allKeys.includes(k)) allKeys.push(k); }); });
-    dlCSV('anket_data.csv', mapped, allKeys);
+
+    // Build ordered header: baseKeys + item columns in order
+    const itemKeys = [];
+    if (def) {
+      def.items.forEach(item => {
+        const k = filterType ? `M${item.id}` : `${singleType}_M${item.id}`;
+        if (!itemKeys.includes(k)) itemKeys.push(k);
+      });
+    } else {
+      mapped.forEach(row => { Object.keys(row).forEach(k => { if (!baseKeys.includes(k) && !itemKeys.includes(k)) itemKeys.push(k); }); });
+    }
+    const allKeys = [...baseKeys, ...itemKeys];
+    const fname = filterType ? `anket_${filterType}_${start||'all'}_${end||'all'}.csv` : `anket_tum_${start||'all'}_${end||'all'}.csv`;
+    dlCSV(fname, mapped, allKeys);
   }
 };
 
