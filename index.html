@@ -1434,29 +1434,6 @@ async function renderSporcu() {
   <div class="main">
     <p class="muted mb16">${dateStr}</p>
 
-    <!-- Status overview -->
-    <div class="status-overview">
-      <div class="status-box">
-        <div class="label">HRV</div>
-        <div class="value" style="font-size:${latestHRV ? '1.1rem' : '1.5rem'}">${hrv ? '●' : (latestHRV ? latestHRV.rmssd?.toFixed(1) + '<span style="font-size:.6rem;opacity:.7"> ms</span>' : '—')}</div>
-        <div class="sub" style="color:${hrv === 'green' ? 'var(--green)' : hrv === 'yellow' ? 'var(--yellow)' : hrv === 'red' ? 'var(--danger)' : 'var(--muted)'}">${hrv ? t(hrv) : (latestHRV ? 'RMSSD' : t('no_data'))}</div>
-      </div>
-      <div class="status-box">
-        <div class="label">Hooper</div>
-        <div class="value">${hooToday ? hooToday.total_score : '—'}</div>
-        <div class="sub" style="color:${hoop === 'green' ? 'var(--green)' : hoop === 'yellow' ? 'var(--yellow)' : hoop === 'red' ? 'var(--danger)' : 'var(--muted)'}">${hoop ? t(hoop) : t('no_data')}</div>
-      </div>
-      <div class="status-box">
-        <div class="label">ACWR</div>
-        <div class="value">${acwr ? '●' : '—'}</div>
-        <div class="sub" style="color:${acwr === 'green' ? 'var(--green)' : acwr === 'yellow' ? 'var(--yellow)' : acwr === 'red' ? 'var(--danger)' : 'var(--muted)'}">${acwr ? t(acwr) : t('no_data')}</div>
-      </div>
-      <div class="status-box">
-        <div class="label">${t('overall')}</div>
-        <div class="value">${overall ? (overall === 'green' ? '🟢' : overall === 'yellow' ? '🟡' : '🔴') : '—'}</div>
-        <div class="sub" style="color:${overall === 'green' ? 'var(--green)' : overall === 'yellow' ? 'var(--yellow)' : overall === 'red' ? 'var(--danger)' : 'var(--muted)'}">${overall ? t(overall) : t('no_data')}</div>
-      </div>
-    </div>
 
     <!-- Tab bar -->
     <div class="tab-bar">
