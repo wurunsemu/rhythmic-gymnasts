@@ -216,6 +216,18 @@ input[type=range]{width:100%;accent-color:var(--navy);cursor:pointer;height:6px}
 .empty p{font-size:.85rem}
 
 /* ============================================================
+   HRV METRICS TABLE
+   ============================================================ */
+.hrv-metrics-table{margin-top:14px;margin-bottom:14px}
+.hrv-metric-group{margin-bottom:12px}
+.hrv-metric-group-title{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #e2e8f0}
+.hrv-metric-row{display:flex;justify-content:space-between;align-items:baseline;padding:5px 0;border-bottom:1px solid #f0f4f8;font-size:.85rem}
+.hrv-metric-row:last-child{border-bottom:none}
+.hrv-metric-name{color:#374151;font-weight:500}
+.hrv-metric-val{font-weight:700;color:var(--navy);font-size:.9rem}
+.hrv-unit{font-size:.72rem;color:var(--muted);margin-left:3px}
+
+/* ============================================================
    RESPONSIVE
    ============================================================ */
 @media(max-width:600px){
@@ -431,6 +443,15 @@ const LANG = {
     hrv_intervals_lbl: 'aralık',
     hrv_entry_manual: 'Manuel Giriş',
     hrv_entry_file: 'Dosyadan Hesapla',
+    hrv_time_domain: 'Zaman Alanı',
+    hrv_freq_domain: 'Frekans Alanı',
+    hrv_nonlinear: 'Doğrusal Olmayan',
+    hrv_freq_short: 'Frekans analizi için en az 150 RR aralığı (~2.5 dk) gereklidir.',
+    invite_sent: 'Davet e-postası gönderildi!',
+    invite_failed: 'Sporcu eklendi fakat davet gönderilemedi: ',
+    invite_btn: 'Davet Gönder',
+    invite_sending: 'Gönderiliyor…',
+    quest_active_none: 'Şu an aktif anket yok. Araştırmacı hesabıyla Veri Girişi → Anket Yönetimi\'nden anketleri aktif edebilirsiniz.',
   },
   en: {
     app_title: 'Rhythmic Gymnastics',
@@ -559,6 +580,15 @@ const LANG = {
     hrv_intervals_lbl: 'intervals',
     hrv_entry_manual: 'Manual Entry',
     hrv_entry_file: 'Calculate from File',
+    hrv_time_domain: 'Time Domain',
+    hrv_freq_domain: 'Frequency Domain',
+    hrv_nonlinear: 'Nonlinear',
+    hrv_freq_short: 'Frequency analysis requires at least 150 RR intervals (~2.5 min).',
+    invite_sent: 'Invite email sent!',
+    invite_failed: 'Athlete added but invite failed: ',
+    invite_btn: 'Send Invite',
+    invite_sending: 'Sending…',
+    quest_active_none: 'No active questionnaires. The researcher can activate them in Data Entry → Questionnaire Management.',
   }
 };
 
@@ -880,24 +910,189 @@ function parseRRIntervals(text) {
   return vals;
 }
 
-/**
- * Calculate RMSSD and resting HR from an array of RR intervals (ms).
- * Returns { rmssd, meanHR, count, durationSec }.
- */
-function calculateHRVMetrics(rrMs) {
-  if (!rrMs || rrMs.length < 2) return null;
-  const mean = rrMs.reduce((s, v) => s + v, 0) / rrMs.length;
-  let sqDiffSum = 0;
-  for (let i = 1; i < rrMs.length; i++) {
-    const d = rrMs[i] - rrMs[i - 1];
-    sqDiffSum += d * d;
+/* ============================================================
+   COMPREHENSIVE HRV ANALYSIS
+   ============================================================ */
+
+/** Cooley-Tukey in-place radix-2 FFT (re[] and im[] must be length 2^n) */
+function fft(re, im) {
+  const n = re.length;
+  // Bit-reversal permutation
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
   }
-  const rmssd = Math.sqrt(sqDiffSum / (rrMs.length - 1));
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wRe = Math.cos(ang), wIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let curRe = 1, curIm = 0;
+      for (let j = 0; j < len / 2; j++) {
+        const uRe = re[i+j], uIm = im[i+j];
+        const vRe = re[i+j+len/2]*curRe - im[i+j+len/2]*curIm;
+        const vIm = re[i+j+len/2]*curIm + im[i+j+len/2]*curRe;
+        re[i+j] = uRe+vRe; im[i+j] = uIm+vIm;
+        re[i+j+len/2] = uRe-vRe; im[i+j+len/2] = uIm-vIm;
+        const tmp = curRe*wRe - curIm*wIm;
+        curIm = curRe*wIm + curIm*wRe;
+        curRe = tmp;
+      }
+    }
+  }
+}
+
+/**
+ * Frequency-domain HRV: resample to 4 Hz grid, FFT, integrate power bands.
+ * Returns { tp, lf, hf, lfHf, lfNorm, hfNorm } or null if too few intervals.
+ */
+function computeFrequencyDomain(rrMs) {
+  if (rrMs.length < 150) return null; // need ~2.5 min
+
+  const fs = 4; // 4 Hz resample
+  // Build cumulative time axis (seconds)
+  const times = [0];
+  for (let i = 1; i < rrMs.length; i++) times.push(times[i-1] + rrMs[i-1]/1000);
+  const duration = times[times.length-1];
+  const nSamples = Math.floor(duration * fs);
+  if (nSamples < 64) return null;
+
+  // Linear interpolation to uniform grid
+  const signal = new Array(nSamples);
+  let k = 0;
+  for (let i = 0; i < nSamples; i++) {
+    const t = i / fs;
+    while (k < times.length - 2 && times[k+1] < t) k++;
+    const alpha = times[k+1] > times[k] ? (t - times[k]) / (times[k+1] - times[k]) : 0;
+    signal[i] = rrMs[k] + alpha * (rrMs[Math.min(k+1, rrMs.length-1)] - rrMs[k]);
+  }
+
+  // Zero-pad to next power of 2
+  let N = 1; while (N < nSamples) N <<= 1;
+  const re = new Array(N).fill(0), im = new Array(N).fill(0);
+  // Detrend (subtract mean) and copy
+  const mean = signal.reduce((s,v)=>s+v,0)/signal.length;
+  for (let i = 0; i < nSamples; i++) re[i] = signal[i] - mean;
+
+  fft(re, im);
+
+  // Power spectral density: |X[k]|² / (N * fs)
+  const freqRes = fs / N;
+  let tp = 0, lf = 0, hf = 0;
+  for (let k2 = 1; k2 < N/2; k2++) {
+    const freq = k2 * freqRes;
+    const power = (re[k2]*re[k2] + im[k2]*im[k2]) / (N * fs);
+    if (freq >= 0.0033 && freq < 0.4) tp += power * freqRes;
+    if (freq >= 0.04  && freq < 0.15) lf += power * freqRes;
+    if (freq >= 0.15  && freq < 0.4)  hf += power * freqRes;
+  }
+
+  const lfHf   = hf > 0 ? lf / hf : null;
+  const lfNorm = (lf + hf) > 0 ? (lf / (lf + hf)) * 100 : null;
+  const hfNorm = (lf + hf) > 0 ? (hf / (lf + hf)) * 100 : null;
+
   return {
-    rmssd: Math.round(rmssd * 10) / 10,
-    meanHR: Math.round(60000 / mean),
-    count: rrMs.length,
-    durationSec: Math.round(rrMs.reduce((s, v) => s + v, 0) / 1000),
+    tp:     Math.round(tp),
+    lf:     Math.round(lf),
+    hf:     Math.round(hf),
+    lfHf:   lfHf   !== null ? Math.round(lfHf * 100) / 100 : null,
+    lfNorm: lfNorm !== null ? Math.round(lfNorm * 10) / 10  : null,
+    hfNorm: hfNorm !== null ? Math.round(hfNorm * 10) / 10  : null,
+  };
+}
+
+/**
+ * Sample Entropy (SampEn) — m=2, r=0.2*SDNN, max 300 points for performance.
+ */
+function computeSampEn(rr, m, r, maxN) {
+  const data = rr.length > maxN ? rr.slice(0, maxN) : rr;
+  const n = data.length;
+  let A = 0, B = 0;
+  for (let i = 0; i < n - m; i++) {
+    for (let j = i + 1; j < n - m; j++) {
+      let matchB = true, matchA = true;
+      for (let k = 0; k < m; k++) { if (Math.abs(data[i+k] - data[j+k]) > r) { matchB = false; break; } }
+      if (matchB) {
+        B++;
+        if (Math.abs(data[i+m] - data[j+m]) > r) matchA = false;
+        if (matchA) A++;
+      }
+    }
+  }
+  if (B === 0) return null;
+  return Math.round(-Math.log(A / B) * 1000) / 1000;
+}
+
+/**
+ * Full HRV analysis. Returns all time-domain, frequency-domain, and nonlinear metrics.
+ */
+function computeFullHRV(rrMs) {
+  if (!rrMs || rrMs.length < 2) return null;
+  const n = rrMs.length;
+  const totalMs = rrMs.reduce((s, v) => s + v, 0);
+  const meanRR = totalMs / n;
+  const meanHR = Math.round(60000 / meanRR);
+
+  // SDNN
+  const variance = rrMs.reduce((s, v) => s + (v - meanRR) ** 2, 0) / (n - 1);
+  const sdnn = Math.sqrt(variance);
+
+  // RMSSD, NN50, pNN50
+  let sqDiffSum = 0, nn50 = 0;
+  for (let i = 1; i < n; i++) {
+    const d = rrMs[i] - rrMs[i-1];
+    sqDiffSum += d * d;
+    if (Math.abs(d) > 50) nn50++;
+  }
+  const rmssd = Math.sqrt(sqDiffSum / (n - 1));
+  const pnn50 = Math.round((nn50 / (n - 1)) * 1000) / 10;
+
+  // TiNN — triangular interpolation of RR histogram
+  const binW = 7.8125; // 1000/128 ms
+  const bins = {};
+  for (const rr of rrMs) {
+    const b = Math.round(rr / binW);
+    bins[b] = (bins[b] || 0) + 1;
+  }
+  const peak = Object.entries(bins).sort((a,b)=>b[1]-a[1])[0];
+  const peakBin = parseInt(peak[0]);
+  // Find leftmost N and rightmost M that bound a triangle containing the peak
+  const minBin = Math.min(...Object.keys(bins).map(Number));
+  const maxBin = Math.max(...Object.keys(bins).map(Number));
+  const tiNN = Math.round((maxBin - minBin) * binW);
+
+  // Poincaré — SD1, SD2
+  const sd1 = Math.round((rmssd / Math.sqrt(2)) * 10) / 10;
+  const sd2 = Math.round(Math.sqrt(2 * sdnn * sdnn - 0.5 * rmssd * rmssd) * 10) / 10;
+  const sd2sd1 = sd1 > 0 ? Math.round((sd2 / sd1) * 100) / 100 : null;
+
+  // SampEn
+  const sampen = computeSampEn(rrMs, 2, 0.2 * sdnn, 300);
+
+  // Frequency domain (may be null if too few intervals)
+  const freq = computeFrequencyDomain(rrMs);
+
+  return {
+    meanRR:    Math.round(meanRR),
+    meanHR,
+    sdnn:      Math.round(sdnn * 10) / 10,
+    rmssd:     Math.round(rmssd * 10) / 10,
+    nn50,
+    pnn50,
+    tiNN,
+    sd1,
+    sd2,
+    sd2sd1,
+    sampen,
+    tp:        freq ? freq.tp     : null,
+    lf:        freq ? freq.lf     : null,
+    hf:        freq ? freq.hf     : null,
+    lfHf:      freq ? freq.lfHf   : null,
+    lfNorm:    freq ? freq.lfNorm : null,
+    hfNorm:    freq ? freq.hfNorm : null,
+    count: n,
+    durationSec: Math.round(totalMs / 1000),
   };
 }
 
@@ -1280,12 +1475,36 @@ function renderHRVTab(rows) {
     <button class="btn-primary" onclick="processRRFile()">${t('hrv_calc_btn')}</button>
     <div id="rr-error" class="alert alert-err" style="display:none;margin-top:12px"></div>
     <div id="rr-result" style="display:none;margin-top:16px">
-      <div style="font-weight:600;margin-bottom:10px;font-size:.9rem">${t('rmssd')} / ${t('resting_hr')} / RR</div>
-      <div class="status-overview" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
-        <div class="status-box"><div class="label">RMSSD</div><div class="value" id="rr-rmssd-val">—</div><div class="sub">ms</div></div>
-        <div class="status-box"><div class="label">${t('resting_hr')}</div><div class="value" id="rr-hr-val">—</div><div class="sub">bpm</div></div>
-        <div class="status-box"><div class="label">${t('hrv_intervals_lbl')}</div><div class="value" id="rr-count-val">—</div><div class="sub">n</div></div>
+      <div class="hrv-metrics-table">
+        <div class="hrv-metric-group">
+          <div class="hrv-metric-group-title">${t('hrv_time_domain')}</div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">Mean RR</span><span><span class="hrv-metric-val" id="rr-meanrr-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">Mean HR</span><span><span class="hrv-metric-val" id="rr-hr-val">—</span><span class="hrv-unit">bpm</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SDNN</span><span><span class="hrv-metric-val" id="rr-sdnn-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">RMSSD</span><span><span class="hrv-metric-val" id="rr-rmssd-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">NN50</span><span><span class="hrv-metric-val" id="rr-nn50-val">—</span><span class="hrv-unit">n</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">pNN50</span><span><span class="hrv-metric-val" id="rr-pnn50-val">—</span><span class="hrv-unit">%</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">TiNN</span><span><span class="hrv-metric-val" id="rr-tinn-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">${t('hrv_intervals_lbl')}</span><span><span class="hrv-metric-val" id="rr-count-val">—</span><span class="hrv-unit">n</span></span></div>
+        </div>
+        <div class="hrv-metric-group" id="rr-freq-group">
+          <div class="hrv-metric-group-title">${t('hrv_freq_domain')}</div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">TP</span><span><span class="hrv-metric-val" id="rr-tp-val">—</span><span class="hrv-unit">ms²</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">LF</span><span><span class="hrv-metric-val" id="rr-lf-val">—</span><span class="hrv-unit">ms²</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">HF</span><span><span class="hrv-metric-val" id="rr-hf-val">—</span><span class="hrv-unit">ms²</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">LF/HF</span><span><span class="hrv-metric-val" id="rr-lfhf-val">—</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">LF norm</span><span><span class="hrv-metric-val" id="rr-lfnorm-val">—</span><span class="hrv-unit">%</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">HF norm</span><span><span class="hrv-metric-val" id="rr-hfnorm-val">—</span><span class="hrv-unit">%</span></span></div>
+        </div>
+        <div class="hrv-metric-group">
+          <div class="hrv-metric-group-title">${t('hrv_nonlinear')}</div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SD1</span><span><span class="hrv-metric-val" id="rr-sd1-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SD2</span><span><span class="hrv-metric-val" id="rr-sd2-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SD2/SD1</span><span><span class="hrv-metric-val" id="rr-sd2sd1-val">—</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SampEn</span><span><span class="hrv-metric-val" id="rr-sampen-val">—</span></span></div>
+        </div>
       </div>
+      <div id="rr-save-error" class="alert alert-err" style="display:none;margin-bottom:8px"></div>
       <div id="rr-save-success" class="success-banner">${t('saved_ok')}</div>
       <button class="btn-primary" id="rr-save-btn" onclick="saveRRResult()">${t('hrv_save_result')}</button>
     </div>
@@ -1521,6 +1740,7 @@ async function renderAthletesTab(el) {
         </select>
       </div>
       <div id="add-athlete-err" class="alert alert-err" style="display:none"></div>
+      <div id="add-athlete-success" class="success-banner" style="display:none"></div>
       <div class="flex-row">
         <button class="btn-primary" style="width:auto;padding:10px 20px" onclick="submitAddAthlete()">${t('save')}</button>
         <button class="btn-secondary" onclick="document.getElementById('add-athlete-form').style.display='none'">${t('cancel')}</button>
@@ -1528,17 +1748,21 @@ async function renderAthletesTab(el) {
     </div>
     <div>
       ${athletes.map(a => `
-      <div class="athlete-row">
+      <div class="athlete-row" style="flex-wrap:wrap;gap:6px">
         <div class="athlete-num">${a.jersey_number || '?'}</div>
         <div class="athlete-info">
           <div class="name">${a.name} ${a.surname}</div>
           <div class="role-tag">${t(a.role)} · ${a.email || ''}</div>
+          ${!a.user_id ? `<div style="font-size:.72rem;color:#c8102e;margin-top:2px">⚠ ${state.lang==='tr' ? 'Hesap yok' : 'No account'}</div>` : ''}
         </div>
-        <select class="form-select" style="width:120px;padding:6px 8px;font-size:.8rem" onchange="changeRole('${a.id}', this.value)">
-          <option value="sporcu" ${a.role==='sporcu'?'selected':''}>${t('sporcu')}</option>
-          <option value="antrenor" ${a.role==='antrenor'?'selected':''}>${t('antrenor')}</option>
-          <option value="arastirmaci" ${a.role==='arastirmaci'?'selected':''}>${t('arastirmaci')}</option>
-        </select>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select class="form-select" style="width:120px;padding:6px 8px;font-size:.8rem" onchange="changeRole('${a.id}', this.value)">
+            <option value="sporcu" ${a.role==='sporcu'?'selected':''}>${t('sporcu')}</option>
+            <option value="antrenor" ${a.role==='antrenor'?'selected':''}>${t('antrenor')}</option>
+            <option value="arastirmaci" ${a.role==='arastirmaci'?'selected':''}>${t('arastirmaci')}</option>
+          </select>
+          ${!a.user_id ? `<button class="btn-secondary" style="padding:6px 12px;font-size:.78rem;white-space:nowrap" id="invite-btn-${a.id}" onclick="inviteAthlete('${a.id}','${a.email}')">${t('invite_btn')}</button>` : ''}
+        </div>
       </div>`).join('')}
       ${!athletes.length ? `<div class="empty"><div class="icon">👥</div><p>${t('no_athletes')}</p></div>` : ''}
     </div>
@@ -1624,10 +1848,34 @@ async function renderDataEntryTab(el) {
     <button class="btn-primary" onclick="processRRFileAdmin()">${t('hrv_calc_btn')}</button>
     <div id="rr-admin-error" class="alert alert-err" style="display:none;margin-top:12px"></div>
     <div id="rr-admin-result" style="display:none;margin-top:16px">
-      <div class="status-overview" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
-        <div class="status-box"><div class="label">RMSSD</div><div class="value" id="rr-admin-rmssd-val">—</div><div class="sub">ms</div></div>
-        <div class="status-box"><div class="label">${t('resting_hr')}</div><div class="value" id="rr-admin-hr-val">—</div><div class="sub">bpm</div></div>
-        <div class="status-box"><div class="label">${t('hrv_intervals_lbl')}</div><div class="value" id="rr-admin-count-val">—</div><div class="sub">n</div></div>
+      <div class="hrv-metrics-table">
+        <div class="hrv-metric-group">
+          <div class="hrv-metric-group-title">${t('hrv_time_domain')}</div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">Mean RR</span><span><span class="hrv-metric-val" id="rr-admin-meanrr-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">Mean HR</span><span><span class="hrv-metric-val" id="rr-admin-hr-val">—</span><span class="hrv-unit">bpm</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SDNN</span><span><span class="hrv-metric-val" id="rr-admin-sdnn-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">RMSSD</span><span><span class="hrv-metric-val" id="rr-admin-rmssd-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">NN50</span><span><span class="hrv-metric-val" id="rr-admin-nn50-val">—</span><span class="hrv-unit">n</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">pNN50</span><span><span class="hrv-metric-val" id="rr-admin-pnn50-val">—</span><span class="hrv-unit">%</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">TiNN</span><span><span class="hrv-metric-val" id="rr-admin-tinn-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">${t('hrv_intervals_lbl')}</span><span><span class="hrv-metric-val" id="rr-admin-count-val">—</span><span class="hrv-unit">n</span></span></div>
+        </div>
+        <div class="hrv-metric-group" id="rr-admin-freq-group">
+          <div class="hrv-metric-group-title">${t('hrv_freq_domain')}</div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">TP</span><span><span class="hrv-metric-val" id="rr-admin-tp-val">—</span><span class="hrv-unit">ms²</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">LF</span><span><span class="hrv-metric-val" id="rr-admin-lf-val">—</span><span class="hrv-unit">ms²</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">HF</span><span><span class="hrv-metric-val" id="rr-admin-hf-val">—</span><span class="hrv-unit">ms²</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">LF/HF</span><span><span class="hrv-metric-val" id="rr-admin-lfhf-val">—</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">LF norm</span><span><span class="hrv-metric-val" id="rr-admin-lfnorm-val">—</span><span class="hrv-unit">%</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">HF norm</span><span><span class="hrv-metric-val" id="rr-admin-hfnorm-val">—</span><span class="hrv-unit">%</span></span></div>
+        </div>
+        <div class="hrv-metric-group">
+          <div class="hrv-metric-group-title">${t('hrv_nonlinear')}</div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SD1</span><span><span class="hrv-metric-val" id="rr-admin-sd1-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SD2</span><span><span class="hrv-metric-val" id="rr-admin-sd2-val">—</span><span class="hrv-unit">ms</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SD2/SD1</span><span><span class="hrv-metric-val" id="rr-admin-sd2sd1-val">—</span></span></div>
+          <div class="hrv-metric-row"><span class="hrv-metric-name">SampEn</span><span><span class="hrv-metric-val" id="rr-admin-sampen-val">—</span></span></div>
+        </div>
       </div>
       <div id="rr-admin-save-success" class="success-banner">${t('saved_ok')}</div>
       <button class="btn-primary" id="rr-admin-save-btn" onclick="saveRRResultAdmin()">${t('hrv_save_result')}</button>
@@ -1960,6 +2208,20 @@ window.submitAddAthlete = async function() {
     if (err) { err.style.display='block'; err.textContent = error.message; }
     return;
   }
+  // Send invite email so athlete can set their own password
+  const redirectTo = window.location.origin + window.location.pathname;
+  const { error: inviteErr } = await db.auth.signUp({
+    email,
+    password: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now(),
+    options: { emailRedirectTo: redirectTo, data: { name, surname } }
+  });
+  const succEl = document.getElementById('add-athlete-success');
+  if (inviteErr) {
+    // Athlete row was saved; just warn about invite
+    if (succEl) { succEl.style.display='block'; succEl.textContent = t('invite_failed') + inviteErr.message; }
+  } else {
+    if (succEl) { succEl.style.display='block'; succEl.textContent = t('invite_sent'); }
+  }
   state.athletes = await getAllAthletes();
   await switchResearchTab('athletes_tab');
 };
@@ -1967,6 +2229,26 @@ window.submitAddAthlete = async function() {
 window.changeRole = async function(id, role) {
   await updateAthleteRole(id, role);
   state.athletes = await getAllAthletes();
+};
+
+window.inviteAthlete = async function(athleteId, email) {
+  const btn = document.getElementById('invite-btn-' + athleteId);
+  if (btn) { btn.disabled = true; btn.textContent = t('invite_sending'); }
+  const redirectTo = window.location.origin + window.location.pathname;
+  const { error } = await db.auth.signUp({
+    email,
+    password: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now(),
+    options: { emailRedirectTo: redirectTo }
+  });
+  if (btn) {
+    if (error) {
+      btn.disabled = false;
+      btn.textContent = t('invite_btn');
+      alert(t('invite_failed') + error.message);
+    } else {
+      btn.textContent = '✓ ' + t('invite_sent');
+    }
+  }
 };
 
 window.submitHRVEntry = async function() {
@@ -2010,13 +2292,38 @@ window.processRRFile = function() {
       if (errDiv) { errDiv.textContent = t('hrv_min_intervals') + ' (' + intervals.length + ' ' + t('hrv_intervals_lbl') + ')'; errDiv.style.display='block'; }
       hide(); return;
     }
-    const metrics = calculateHRVMetrics(intervals);
-    if (!metrics) { if (errDiv) { errDiv.textContent = t('hrv_parse_error'); errDiv.style.display='block'; } hide(); return; }
-    state.rrMetrics = metrics;
-    document.getElementById('rr-rmssd-val').textContent = metrics.rmssd.toFixed(1);
-    document.getElementById('rr-hr-val').textContent    = metrics.meanHR;
-    document.getElementById('rr-count-val').textContent = metrics.count;
+    const m = computeFullHRV(intervals);
+    if (!m) { if (errDiv) { errDiv.textContent = t('hrv_parse_error'); errDiv.style.display='block'; } hide(); return; }
+    state.rrMetrics = m;
+    const set = (id, v, fmt) => { const el = document.getElementById(id); if (el) el.textContent = v !== null && v !== undefined ? (fmt ? fmt(v) : v) : '—'; };
+    set('rr-meanrr-val', m.meanRR);
+    set('rr-hr-val',     m.meanHR);
+    set('rr-sdnn-val',   m.sdnn,  v => v.toFixed(1));
+    set('rr-rmssd-val',  m.rmssd, v => v.toFixed(1));
+    set('rr-nn50-val',   m.nn50);
+    set('rr-pnn50-val',  m.pnn50);
+    set('rr-tinn-val',   m.tiNN);
+    set('rr-count-val',  m.count);
+    set('rr-tp-val',     m.tp);
+    set('rr-lf-val',     m.lf);
+    set('rr-hf-val',     m.hf);
+    set('rr-lfhf-val',   m.lfHf);
+    set('rr-lfnorm-val', m.lfNorm);
+    set('rr-hfnorm-val', m.hfNorm);
+    set('rr-sd1-val',    m.sd1);
+    set('rr-sd2-val',    m.sd2);
+    set('rr-sd2sd1-val', m.sd2sd1);
+    set('rr-sampen-val', m.sampen);
+    // Show frequency-domain note if too few intervals
+    const freqGroup = document.getElementById('rr-freq-group');
+    if (freqGroup) {
+      if (m.tp === null) {
+        freqGroup.innerHTML = `<div class="hrv-metric-group-title">${t('hrv_freq_domain')}</div><div style="font-size:.8rem;color:var(--muted);padding:4px 0">${t('hrv_freq_short')}</div>`;
+      }
+    }
     document.getElementById('rr-save-success').style.display = 'none';
+    const saveErr = document.getElementById('rr-save-error');
+    if (saveErr) saveErr.style.display = 'none';
     const btn = document.getElementById('rr-save-btn');
     if (btn) btn.style.display='block';
     if (resultDiv) resultDiv.style.display='block';
@@ -2025,9 +2332,18 @@ window.processRRFile = function() {
 };
 
 window.saveRRResult = async function() {
-  if (!state.rrMetrics || !state.athlete) return;
-  const { rmssd, meanHR } = state.rrMetrics;
-  const ok = await saveHRV({ athlete_id: state.athlete.id, reading_date: today(), rmssd, resting_hr: meanHR, notes: t('hrv_saved_file') });
+  const saveErr = document.getElementById('rr-save-error');
+  if (!state.rrMetrics) {
+    if (saveErr) { saveErr.textContent = state.lang==='tr' ? 'Önce bir dosya yükleyip hesaplayın.' : 'Please upload and calculate a file first.'; saveErr.style.display='block'; }
+    return;
+  }
+  if (!state.athlete) {
+    if (saveErr) { saveErr.textContent = state.lang==='tr' ? 'Oturum bilgisi bulunamadı, sayfayı yenileyin.' : 'Session not found, please reload.'; saveErr.style.display='block'; }
+    return;
+  }
+  if (saveErr) saveErr.style.display='none';
+  const { rmssd, meanHR, lfHf } = state.rrMetrics;
+  const ok = await saveHRV({ athlete_id: state.athlete.id, reading_date: today(), rmssd, resting_hr: meanHR, lf_hf: lfHf || null, notes: t('hrv_saved_file') });
   if (ok) {
     document.getElementById('rr-save-success').style.display = 'block';
     const btn = document.getElementById('rr-save-btn');
@@ -2039,6 +2355,8 @@ window.saveRRResult = async function() {
         drawLineChart('hrv-chart-sporcu', hrv.map(r=>r.reading_date), hrv.map(r=>r.rmssd), 'RMSSD', 'rgba(26,60,94,1)', 'rgba(26,60,94,0.1)');
       }
     });
+  } else {
+    if (saveErr) { saveErr.textContent = state.lang==='tr' ? 'Kayıt başarısız. SQL yamasını çalıştırdığınızdan emin olun (hrv_sporcu_patch.sql).' : 'Save failed. Make sure you ran the SQL patch (hrv_sporcu_patch.sql).'; saveErr.style.display='block'; }
   }
 };
 
@@ -2065,12 +2383,33 @@ window.processRRFileAdmin = function() {
       if (errDiv) { errDiv.textContent = t('hrv_min_intervals') + ' (' + intervals.length + ' ' + t('hrv_intervals_lbl') + ')'; errDiv.style.display='block'; }
       hide(); return;
     }
-    const metrics = calculateHRVMetrics(intervals);
-    if (!metrics) { if (errDiv) { errDiv.textContent = t('hrv_parse_error'); errDiv.style.display='block'; } hide(); return; }
-    state.rrMetricsAdmin = metrics;
-    document.getElementById('rr-admin-rmssd-val').textContent = metrics.rmssd.toFixed(1);
-    document.getElementById('rr-admin-hr-val').textContent    = metrics.meanHR;
-    document.getElementById('rr-admin-count-val').textContent = metrics.count;
+    const m = computeFullHRV(intervals);
+    if (!m) { if (errDiv) { errDiv.textContent = t('hrv_parse_error'); errDiv.style.display='block'; } hide(); return; }
+    state.rrMetricsAdmin = m;
+    const set = (id, v, fmt) => { const el = document.getElementById(id); if (el) el.textContent = v !== null && v !== undefined ? (fmt ? fmt(v) : v) : '—'; };
+    set('rr-admin-meanrr-val', m.meanRR);
+    set('rr-admin-hr-val',     m.meanHR);
+    set('rr-admin-sdnn-val',   m.sdnn,  v => v.toFixed(1));
+    set('rr-admin-rmssd-val',  m.rmssd, v => v.toFixed(1));
+    set('rr-admin-nn50-val',   m.nn50);
+    set('rr-admin-pnn50-val',  m.pnn50);
+    set('rr-admin-tinn-val',   m.tiNN);
+    set('rr-admin-count-val',  m.count);
+    set('rr-admin-tp-val',     m.tp);
+    set('rr-admin-lf-val',     m.lf);
+    set('rr-admin-hf-val',     m.hf);
+    set('rr-admin-lfhf-val',   m.lfHf);
+    set('rr-admin-lfnorm-val', m.lfNorm);
+    set('rr-admin-hfnorm-val', m.hfNorm);
+    set('rr-admin-sd1-val',    m.sd1);
+    set('rr-admin-sd2-val',    m.sd2);
+    set('rr-admin-sd2sd1-val', m.sd2sd1);
+    set('rr-admin-sampen-val', m.sampen);
+    // Show frequency-domain note if too few intervals
+    const freqGroup = document.getElementById('rr-admin-freq-group');
+    if (freqGroup && m.tp === null) {
+      freqGroup.innerHTML = `<div class="hrv-metric-group-title">${t('hrv_freq_domain')}</div><div style="font-size:.8rem;color:var(--muted);padding:4px 0">${t('hrv_freq_short')}</div>`;
+    }
     document.getElementById('rr-admin-save-success').style.display = 'none';
     const btn = document.getElementById('rr-admin-save-btn');
     if (btn) btn.style.display='block';
@@ -2088,8 +2427,8 @@ window.saveRRResultAdmin = async function() {
     if (errDiv) { errDiv.textContent = state.lang==='tr' ? 'Sporcu ve tarih seçmelisiniz.' : 'Please select athlete and date.'; errDiv.style.display='block'; }
     return;
   }
-  const { rmssd, meanHR } = state.rrMetricsAdmin;
-  const ok = await saveHRV({ athlete_id: athleteId, reading_date: date, rmssd, resting_hr: meanHR, notes: t('hrv_saved_file') });
+  const { rmssd, meanHR, lfHf } = state.rrMetricsAdmin;
+  const ok = await saveHRV({ athlete_id: athleteId, reading_date: date, rmssd, resting_hr: meanHR, lf_hf: lfHf || null, notes: t('hrv_saved_file') });
   if (ok) {
     document.getElementById('rr-admin-save-success').style.display = 'block';
     const btn = document.getElementById('rr-admin-save-btn');
@@ -2374,7 +2713,7 @@ async function init() {
   if (hash && hash.includes('access_token')) {
     const params = new URLSearchParams(hash.slice(1));
     const type = params.get('type');
-    if (type === 'invite' || type === 'recovery') {
+    if (type === 'invite' || type === 'recovery' || type === 'signup') {
       const { data, error } = await db.auth.getSession();
       history.replaceState(null, '', window.location.pathname);
       if (!error && data.session) {
