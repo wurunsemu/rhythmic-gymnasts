@@ -420,7 +420,6 @@ const LANG = {
     set_pass_sub: 'Hesabınız için güvenli bir şifre oluşturun.',
     new_pass: 'Yeni Şifre',
     set_pass_btn: 'Şifremi Kaydet',
-    quest_active_none: 'Şu an aktif anket bulunmamaktadır.',
     quest_fill: 'Anketi Doldur',
     quest_done: 'Tamamlandı ✓',
     quest_submitted: 'Anket başarıyla kaydedildi!',
@@ -557,7 +556,6 @@ const LANG = {
     set_pass_sub: 'Create a secure password for your account.',
     new_pass: 'New Password',
     set_pass_btn: 'Save Password',
-    quest_active_none: 'No active questionnaires at the moment.',
     quest_fill: 'Fill Questionnaire',
     quest_done: 'Completed ✓',
     quest_submitted: 'Questionnaire saved successfully!',
@@ -1620,59 +1618,77 @@ async function switchResearchTab(tab) {
   if (!content) return;
   content.innerHTML = `<div class="loading" style="min-height:200px"><div class="spinner"></div></div>`;
 
-  if (tab === 'overview') await renderOverviewTab(content);
-  else if (tab === 'athletes_tab') await renderAthletesTab(content);
-  else if (tab === 'data_entry') await renderDataEntryTab(content);
-  else if (tab === 'export') renderExportTab(content);
+  try {
+    if (tab === 'overview') await renderOverviewTab(content);
+    else if (tab === 'athletes_tab') await renderAthletesTab(content);
+    else if (tab === 'data_entry') await renderDataEntryTab(content);
+    else if (tab === 'export') renderExportTab(content);
+  } catch(err) {
+    console.error('[switchResearchTab] tab error:', tab, err);
+    content.innerHTML = `<div class="card"><div class="alert alert-err" style="margin:0">
+      <strong>⚠ Sekme yüklenemedi / Tab failed to load</strong><br>
+      <code style="font-size:.8rem">${err && err.message ? err.message : String(err)}</code>
+    </div></div>`;
+  }
 }
 
 async function renderOverviewTab(el) {
-  const athletes = state.athletes.filter(a => a.role === 'sporcu' && a.active);
+  try {
+    const athletes = state.athletes.filter(a => a.role === 'sporcu' && a.active);
+    console.log('[overview] athletes count:', athletes.length, 'state.athletes:', state.athletes.length);
 
-  const rows = await Promise.all(athletes.map(async a => {
-    const [hrv, rpe, hoop] = await Promise.all([
-      getHRVHistory(a.id, 30), getRPEHistory(a.id, 28), getHooperHistory(a.id, 7)
-    ]);
-    const latestHoop = hoop.length ? hoop[hoop.length-1] : null;
-    const hs = latestHoop ? hooperStatus(latestHoop.total_score) : null;
-    return {
-      a,
-      hs_hrv: hrvStatus(hrv),
-      hs,
-      hs_acwr: acwrStatus(rpe),
-      ov: overallStatus(hrvStatus(hrv), hs, acwrStatus(rpe)),
-      latestRMSSD: hrv.length ? hrv[hrv.length-1].rmssd : null,
-      latestHooper: latestHoop ? latestHoop.total_score : null,
-    };
-  }));
+    const rows = await Promise.all(athletes.map(async a => {
+      const [hrv, rpe, hoop] = await Promise.all([
+        getHRVHistory(a.id, 30), getRPEHistory(a.id, 28), getHooperHistory(a.id, 7)
+      ]);
+      const latestHoop = hoop.length ? hoop[hoop.length-1] : null;
+      const hs = latestHoop ? hooperStatus(latestHoop.total_score) : null;
+      return {
+        a,
+        hs_hrv: hrvStatus(hrv),
+        hs,
+        hs_acwr: acwrStatus(rpe),
+        ov: overallStatus(hrvStatus(hrv), hs, acwrStatus(rpe)),
+        latestRMSSD: hrv.length ? hrv[hrv.length-1].rmssd : null,
+        latestHooper: latestHoop ? latestHoop.total_score : null,
+      };
+    }));
 
-  el.innerHTML = `
-  <div class="card">
-    <div class="card-title"><span class="icon">🚦</span>${t('team_overview')}</div>
-    <div class="table-scroll">
-      <table class="tl-table">
-        <thead><tr>
-          <th>${t('athlete')}</th>
-          <th>HRV (ms)</th>
-          <th>Hooper</th>
-          <th>ACWR</th>
-          <th>${t('overall')}</th>
-        </tr></thead>
-        <tbody>
-          ${rows.map(({a, hs_hrv, hs, hs_acwr, ov, latestRMSSD, latestHooper}) => `
-          <tr style="cursor:pointer" onclick="showAthleteDetail('${a.id}')">
-            <td><strong>${a.name} ${a.surname}</strong>${a.jersey_number ? ` <small class="muted">#${a.jersey_number}</small>` : ''}</td>
-            <td>${latestRMSSD ? `<strong>${latestRMSSD}</strong> ${tlBadge(hs_hrv)}` : '<span class="muted">—</span>'}</td>
-            <td>${latestHooper ? `<strong>${latestHooper}/28</strong> ${tlBadge(hs)}` : '<span class="muted">—</span>'}</td>
-            <td>${tlBadge(hs_acwr)}</td>
-            <td>${tlBadge(ov)}</td>
-          </tr>`).join('')}
-          ${!rows.length ? `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">${t('no_athletes')}</td></tr>` : ''}
-        </tbody>
-      </table>
+    el.innerHTML = `
+    <div class="card">
+      <div class="card-title"><span class="icon">🚦</span>${t('team_overview')}</div>
+      <div class="table-scroll">
+        <table class="tl-table">
+          <thead><tr>
+            <th>${t('athlete')}</th>
+            <th>HRV (ms)</th>
+            <th>Hooper</th>
+            <th>ACWR</th>
+            <th>${t('overall')}</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(({a, hs_hrv, hs, hs_acwr, ov, latestRMSSD, latestHooper}) => `
+            <tr style="cursor:pointer" onclick="showAthleteDetail('${a.id}')">
+              <td><strong>${a.name} ${a.surname}</strong>${a.jersey_number ? ` <small class="muted">#${a.jersey_number}</small>` : ''}</td>
+              <td>${latestRMSSD ? `<strong>${latestRMSSD}</strong> ${tlBadge(hs_hrv)}` : '<span class="muted">—</span>'}</td>
+              <td>${latestHooper ? `<strong>${latestHooper}/28</strong> ${tlBadge(hs)}` : '<span class="muted">—</span>'}</td>
+              <td>${tlBadge(hs_acwr)}</td>
+              <td>${tlBadge(ov)}</td>
+            </tr>`).join('')}
+            ${!rows.length ? `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">${t('no_athletes')}</td></tr>` : ''}
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
-  <div id="athlete-detail-panel"></div>`;
+    <div id="athlete-detail-panel"></div>`;
+  } catch(err) {
+    console.error('[overview] render error:', err);
+    el.innerHTML = `<div class="card"><div class="alert alert-err" style="margin:0">
+      <strong>⚠ Genel Bakış yüklenemedi / Overview failed to load</strong><br>
+      <code style="font-size:.8rem;word-break:break-all">${err && err.message ? err.message : String(err)}</code><br>
+      <small style="opacity:.7;margin-top:4px;display:block">Tarayıcı konsolunda detaylara bakın. / Check browser console for details.</small>
+    </div></div>`;
+  }
 }
 
 async function showAthleteDetail(aid) {
