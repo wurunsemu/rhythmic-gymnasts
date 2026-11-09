@@ -2213,7 +2213,7 @@ window.submitHooper = async function() {
   const ok = await saveHooper(state.athlete.id, scores);
   if (ok) {
     showSuccess('hoop-success');
-    setTimeout(() => renderSporcu(), 1500);
+    setTimeout(() => { if (!state.currentQuest) renderSporcu(); }, 1500);
   }
 };
 
