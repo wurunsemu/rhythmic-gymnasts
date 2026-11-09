@@ -378,6 +378,15 @@ const LANG = {
     athletes_tab: 'Sporcular',
     data_entry: 'Veri Girişi',
     export: 'Export',
+    coach_assignments: 'Antrenör Yetkilendirme',
+    ca_coach: 'Antrenör',
+    ca_no_coaches: 'Henüz antrenör hesabı yok.',
+    ca_no_athletes: 'Henüz sporcu hesabı yok.',
+    ca_all_access: 'Tüm sporcular görünür (kısıtlama yok)',
+    ca_save: 'Kaydet',
+    ca_saved: '✓ Kaydedildi',
+    ca_saving: 'Kaydediliyor…',
+    ca_desc: 'Her antrenör için hangi sporcuların görünür olduğunu belirleyin. Hiç sporcu seçilmezse antrenör tüm sporcuları görür.',
     team_overview: 'Takım Genel Bakış',
     athlete_detail: 'Sporcu Detay',
     hrv_entry_title: 'HRV Veri Girişi',
@@ -518,6 +527,15 @@ const LANG = {
     athletes_tab: 'Athletes',
     data_entry: 'Data Entry',
     export: 'Export',
+    coach_assignments: 'Coach Permissions',
+    ca_coach: 'Coach',
+    ca_no_coaches: 'No coach accounts yet.',
+    ca_no_athletes: 'No athlete accounts yet.',
+    ca_all_access: 'All athletes visible (no restriction)',
+    ca_save: 'Save',
+    ca_saved: '✓ Saved',
+    ca_saving: 'Saving…',
+    ca_desc: 'Set which athletes are visible to each coach. If no athletes are selected, the coach sees all athletes.',
     team_overview: 'Team Overview',
     athlete_detail: 'Athlete Detail',
     hrv_entry_title: 'HRV Data Entry',
@@ -1249,6 +1267,42 @@ async function getAllAthletes() {
     return [];
   }
 }
+async function getCoachAssignments(coachId) {
+  // Returns array of athlete_ids assigned to this coach, or null if table missing
+  try {
+    const { data, error } = await db
+      .from('coach_athlete_assignments')
+      .select('athlete_id')
+      .eq('coach_id', coachId);
+    if (error) {
+      if (error.code === '42P01') return null; // table doesn't exist yet
+      console.warn('[getCoachAssignments] hata:', error.message);
+      return null;
+    }
+    return data ? data.map(r => r.athlete_id) : [];
+  } catch(e) {
+    console.warn('[getCoachAssignments] exception:', e);
+    return null;
+  }
+}
+async function setCoachAssignment(coachId, athleteId, assigned) {
+  // assigned=true → insert, assigned=false → delete
+  if (assigned) {
+    const myProfile = await getMyAthleteProfile();
+    const { error } = await db.from('coach_athlete_assignments').upsert({
+      coach_id: coachId,
+      athlete_id: athleteId,
+      assigned_by: myProfile ? myProfile.id : null
+    }, { onConflict: 'coach_id,athlete_id' });
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await db.from('coach_athlete_assignments')
+      .delete()
+      .eq('coach_id', coachId)
+      .eq('athlete_id', athleteId);
+    if (error) throw new Error(error.message);
+  }
+}
 async function getHooperToday(athleteId) {
   const { data } = await db.from('hooper_index').select('*').eq('athlete_id', athleteId).eq('entry_date', today()).single();
   return data;
@@ -1636,7 +1690,18 @@ function renderHRVTab(rows) {
    ============================================================ */
 async function renderAntrenor() {
   const athletes = await getAllAthletes();
-  const sporcular = athletes.filter(a => a.role === 'sporcu' && a.active);
+  const myProfile = await getMyAthleteProfile();
+  let sporcular = athletes.filter(a => a.role === 'sporcu' && a.active);
+
+  // Filter by coach-athlete assignments if any exist for this coach
+  if (myProfile) {
+    const assignedIds = await getCoachAssignments(myProfile.id);
+    // null = table missing or error → show all; [] empty = no restriction yet → show all
+    if (assignedIds && assignedIds.length > 0) {
+      const idSet = new Set(assignedIds);
+      sporcular = sporcular.filter(a => idSet.has(a.id));
+    }
+  }
 
   const rows = await Promise.all(sporcular.map(async a => {
     const [hrv, rpe, hoop] = await Promise.all([
@@ -1706,7 +1771,7 @@ async function renderArastirmaci() {
 }
 
 function renderResearchShell() {
-  const tabs = ['overview','athletes_tab','data_entry','export'];
+  const tabs = ['overview','athletes_tab','data_entry','export','coach_assignments'];
   document.getElementById('app').innerHTML = `
   ${renderHeader(t('arastirmaci'))}
   <div class="main-wide" style="padding:12px 16px">
@@ -1733,6 +1798,7 @@ async function switchResearchTab(tab) {
     else if (tab === 'athletes_tab') await renderAthletesTab(content);
     else if (tab === 'data_entry') await renderDataEntryTab(content);
     else if (tab === 'export') renderExportTab(content);
+    else if (tab === 'coach_assignments') await renderCoachAssignmentsTab(content);
   } catch(err) {
     console.error('[switchResearchTab] tab error:', tab, err);
     content.innerHTML = `<div class="card"><div class="alert alert-err" style="margin:0">
@@ -2076,6 +2142,108 @@ async function renderDataEntryTab(el) {
       <button class="btn-primary" id="rr-admin-save-btn" onclick="saveRRResultAdmin()">${t('hrv_save_result')}</button>
     </div>
   </div>`;
+}
+
+async function renderCoachAssignmentsTab(el) {
+  const allAthletes = state.athletes.length ? state.athletes : await getAllAthletes();
+  const coaches   = allAthletes.filter(a => a.role === 'antrenor' && a.active);
+  const sporcular = allAthletes.filter(a => a.role === 'sporcu'   && a.active);
+
+  if (!coaches.length) {
+    el.innerHTML = `<div class="card"><div class="alert alert-info">${t('ca_no_coaches')}</div></div>`;
+    return;
+  }
+  if (!sporcular.length) {
+    el.innerHTML = `<div class="card"><div class="alert alert-info">${t('ca_no_athletes')}</div></div>`;
+    return;
+  }
+
+  // Load current assignments for all coaches in parallel
+  const assignmentMap = {}; // coachId → Set<athleteId>
+  await Promise.all(coaches.map(async coach => {
+    const ids = await getCoachAssignments(coach.id);
+    assignmentMap[coach.id] = ids ? new Set(ids) : new Set();
+  }));
+
+  el.innerHTML = `<div class="card">
+    <div class="card-title"><span class="icon">🔐</span>${t('coach_assignments')}</div>
+    <p class="muted mb16">${t('ca_desc')}</p>
+    <div id="ca-coaches-list"></div>
+  </div>`;
+
+  const container = el.querySelector('#ca-coaches-list');
+
+  coaches.forEach(coach => {
+    const assigned = assignmentMap[coach.id];
+    const hasRestriction = assigned.size > 0;
+
+    const block = document.createElement('div');
+    block.style.cssText = 'border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;';
+    block.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <strong style="font-size:1rem">${coach.name} ${coach.surname}
+          ${coach.jersey_number ? `<small class="muted">#${coach.jersey_number}</small>` : ''}
+        </strong>
+        <button class="btn btn-sm" id="ca-save-${coach.id}" onclick="saveCoachAssignments('${coach.id}')"
+          style="min-width:90px">${t('ca_save')}</button>
+      </div>
+      ${!hasRestriction ? `<p class="muted" style="font-size:.82rem;margin-bottom:8px">⚡ ${t('ca_all_access')}</p>` : ''}
+      <div style="display:flex;flex-wrap:wrap;gap:8px" id="ca-checks-${coach.id}">
+        ${sporcular.map(sp => `
+          <label style="display:flex;align-items:center;gap:5px;background:var(--bg);border:1px solid var(--border);
+                         border-radius:7px;padding:5px 10px;cursor:pointer;font-size:.88rem">
+            <input type="checkbox" data-coach="${coach.id}" data-athlete="${sp.id}"
+              ${assigned.has(sp.id) ? 'checked' : ''}
+              onchange="onCoachAssignCheck(this,'${coach.id}')">
+            ${sp.name} ${sp.surname}${sp.jersey_number ? ` <small class="muted">#${sp.jersey_number}</small>` : ''}
+          </label>`).join('')}
+      </div>`;
+    container.appendChild(block);
+  });
+}
+
+function onCoachAssignCheck(checkbox, coachId) {
+  // Update the "all access" notice live and re-enable save button
+  const block = checkbox.closest('div[id^="ca-checks-"]').parentElement;
+  const checks = block.querySelectorAll(`input[data-coach="${coachId}"]`);
+  const anyChecked = [...checks].some(c => c.checked);
+  const notice = block.querySelector('p.muted');
+  if (anyChecked && notice) notice.remove();
+  if (!anyChecked && !block.querySelector('p.muted')) {
+    const noticeLine = document.createElement('p');
+    noticeLine.className = 'muted';
+    noticeLine.style.cssText = 'font-size:.82rem;margin-bottom:8px';
+    noticeLine.textContent = `⚡ ${t('ca_all_access')}`;
+    block.querySelector(`#ca-checks-${coachId}`).insertAdjacentElement('beforebegin', noticeLine);
+  }
+  const btn = document.getElementById(`ca-save-${coachId}`);
+  if (btn) { btn.textContent = t('ca_save'); btn.disabled = false; }
+}
+
+async function saveCoachAssignments(coachId) {
+  const btn = document.getElementById(`ca-save-${coachId}`);
+  if (btn) { btn.textContent = t('ca_saving'); btn.disabled = true; }
+
+  const checks = document.querySelectorAll(`input[data-coach="${coachId}"]`);
+  const desired = new Set([...checks].filter(c => c.checked).map(c => c.dataset.athlete));
+
+  // Current state from DB
+  const currentIds = await getCoachAssignments(coachId);
+  const current = currentIds ? new Set(currentIds) : new Set();
+
+  const toAdd    = [...desired].filter(id => !current.has(id));
+  const toRemove = [...current].filter(id => !desired.has(id));
+
+  try {
+    await Promise.all([
+      ...toAdd.map(aId    => setCoachAssignment(coachId, aId, true)),
+      ...toRemove.map(aId => setCoachAssignment(coachId, aId, false))
+    ]);
+    if (btn) { btn.textContent = t('ca_saved'); btn.disabled = false; }
+  } catch(e) {
+    console.error('[saveCoachAssignments]', e);
+    if (btn) { btn.textContent = '⚠ Hata'; btn.disabled = false; }
+  }
 }
 
 function renderExportTab(el) {
